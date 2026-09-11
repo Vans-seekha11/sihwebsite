@@ -1,10 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-
-interface ProfileMeta {
-  label: string; profileName: string; profileInitials: string;
-  officerId: string; department: string; region: string; phone: string;
-  email: string; lastLogin: string; status: string;
-}
+import { profileService, type ProfileMeta } from '@/lib/profileService';
 
 const NAVY = '#17324D';
 const TEAL = '#2F6F7E';
@@ -129,15 +124,16 @@ function ErrorBanner({ msg }: { msg: string }) {
 
 // ─── edit-profile section ─────────────────────────────────────────────────────
 
-function EditProfileSection({ meta }: { meta: ProfileMeta }) {
+function EditProfileSection({ meta, onSave }: { meta: ProfileMeta; onSave: (updates: Partial<ProfileMeta>) => void }) {
   const [form, setForm] = useState({
-    name: meta.profileName, phone: meta.phone, email: meta.email, department: meta.department,
+    name: meta.profileName, phone: meta.phone, email: meta.email, department: meta.department, region: meta.region, label: meta.label, avatarUrl: meta.avatarUrl ?? '',
   });
   const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState(false);
+  const [error, setError] = useState('');
   const [avatarSeed, setAvatarSeed] = useState(0);
   const fileRef = useRef<HTMLInputElement>(null);
-  const [avatarUrl, setAvatarUrl] = useState('');
+  const [avatarUrl, setAvatarUrl] = useState(meta.avatarUrl ?? '');
 
   const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
@@ -148,15 +144,65 @@ function EditProfileSection({ meta }: { meta: ProfileMeta }) {
   };
 
   const save = async () => {
-    setSaving(true); setSuccess(false);
-    await new Promise(r => setTimeout(r, 900));
-    setSaving(false); setSuccess(true);
-    setTimeout(() => setSuccess(false), 3500);
+    setError(''); setSuccess(false);
+    
+    // Validation
+    if (!form.name.trim()) {
+      setError('Name is required');
+      return;
+    }
+    if (!form.email.trim()) {
+      setError('Email is required');
+      return;
+    }
+    if (!form.email.includes('@') || !form.email.includes('.')) {
+      setError('Invalid email format');
+      return;
+    }
+    if (form.label !== 'Control Officer' && !form.region.trim()) {
+      setError('District/Region is required');
+      return;
+    }
+    if (form.phone && !/^[\d\s\+\-\(\)]{10,}$/.test(form.phone.replace(/\s/g, ''))) {
+      setError('Invalid phone number format');
+      return;
+    }
+
+    setSaving(true);
+    const result = await profileService.updateProfile({
+      profileName: form.name.trim(),
+      phone: form.phone.trim(),
+      email: form.email.trim(),
+      department: form.department.trim(),
+      region: form.region.trim(),
+      label: form.label,
+      avatarUrl,
+    });
+    
+    setSaving(false);
+    
+    if (result.success) {
+      setSuccess(true);
+      setTimeout(() => setSuccess(false), 3500);
+      // Call the original onSave for backward compatibility
+      onSave({
+        profileName: form.name.trim(),
+        phone: form.phone.trim(),
+        email: form.email.trim(),
+        department: form.department.trim(),
+        region: form.region.trim(),
+        label: form.label,
+        avatarUrl,
+      });
+    } else {
+      setError(result.error || 'Failed to update profile');
+    }
   };
 
   const reset = () => {
-    setForm({ name: meta.profileName, phone: meta.phone, email: meta.email, department: meta.department });
-    setAvatarUrl('');
+    setForm({ name: meta.profileName, phone: meta.phone, email: meta.email, department: meta.department, region: meta.region, label: meta.label, avatarUrl: meta.avatarUrl ?? '' });
+    setAvatarUrl(meta.avatarUrl ?? '');
+    setError('');
   };
 
   return (
@@ -168,7 +214,7 @@ function EditProfileSection({ meta }: { meta: ProfileMeta }) {
             ? <img key={avatarSeed} src={avatarUrl} alt="Avatar" className="w-16 h-16 rounded-full object-cover" style={{ boxShadow: `0 0 0 3px ${GOLD}` }} />
             : <div className="w-16 h-16 rounded-full flex items-center justify-center text-xl font-bold"
                 style={{ background: `linear-gradient(135deg, ${NAVY}, ${TEAL})`, color: 'white', boxShadow: `0 0 0 3px ${GOLD}` }}>
-                {meta.profileInitials}
+                {meta.avatarUrl ? <img src={meta.avatarUrl} alt="Profile" className="h-full w-full rounded-full object-cover" /> : meta.profileInitials}
               </div>
           }
           <button onClick={() => fileRef.current?.click()}
@@ -207,9 +253,23 @@ function EditProfileSection({ meta }: { meta: ProfileMeta }) {
           <Label>Department</Label>
           <Input value={form.department} onChange={v => setForm(s => ({ ...s, department: v }))} />
         </div>
+        <div>
+          <Label>Role / Position</Label>
+          <select value={form.label} onChange={e => setForm(s => ({ ...s, label: e.target.value }))}
+            className="w-full rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: BORDER, color: '#16222E', background: 'rgba(255,255,255,0.8)' }}>
+            <option>Field Officer</option>
+            <option>District Officer</option>
+            <option>Control Officer</option>
+          </select>
+        </div>
+        {form.label !== 'Control Officer' && <div>
+          <Label>District / Region</Label>
+          <Input value={form.region} onChange={v => setForm(s => ({ ...s, region: v }))} />
+        </div>}
       </div>
 
       {success && <SuccessBanner msg="Profile updated successfully." />}
+      {error && <ErrorBanner msg={error} />}
 
       <div className="flex gap-2 pt-1">
         <button onClick={save} disabled={saving}
@@ -528,7 +588,7 @@ function Row({ icon, label, value }: { icon: string; label: string; value: strin
 
 // ─── main panel ──────────────────────────────────────────────────────────────
 
-export default function ProfilePanel({ open, onClose, meta }: { open: boolean; onClose: () => void; meta: ProfileMeta }) {
+export default function ProfilePanel({ open, onClose, meta, onSave }: { open: boolean; onClose: () => void; meta: ProfileMeta; onSave: (updates: Partial<ProfileMeta>) => void }) {
   const [tab, setTab] = useState<'profile' | 'settings'>('profile');
   const [expanded, setExpanded] = useState<string | null>(null);
   const [logoutDialog, setLogoutDialog] = useState(false);
@@ -552,14 +612,14 @@ export default function ProfilePanel({ open, onClose, meta }: { open: boolean; o
     setLoggingOut(false);
     setLogoutDialog(false);
     onClose();
-    // In real app, clear session/auth token here
+    profileService.clearSession();
   };
 
   if (!open && !loggingOut) return null;
   const statusActive = /active|duty|online/i.test(meta.status);
 
   const SETTINGS_SECTIONS = [
-    { key: 'edit', icon: '✎', title: 'Edit Profile', content: <EditProfileSection meta={meta} /> },
+    { key: 'edit', icon: '✎', title: 'Edit Profile', content: <EditProfileSection meta={meta} onSave={onSave} /> },
     { key: 'notif', icon: '◬', title: 'Notifications', content: <NotificationsSection /> },
     { key: 'appearance', icon: '◐', title: 'Theme & Appearance', content: <AppearanceSection /> },
     { key: 'language', icon: '⚑', title: 'Language', content: <LanguageSection /> },

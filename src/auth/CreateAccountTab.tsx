@@ -44,13 +44,48 @@ export default function CreateAccountTab() {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [selectedRole, setSelectedRole] = useState<Role>(null);
+  const [district, setDistrict] = useState("");
+  const [fullName, setFullName] = useState("");
+  const [email, setEmail] = useState("");
+  const [department, setDepartment] = useState("");
+  const [submitted, setSubmitted] = useState(false);
 
-  const canSubmit = selectedRole !== null;
+  const canSubmit = selectedRole !== null && fullName.trim() !== "" && email.trim() !== "" &&
+    (selectedRole === "control-room" || district !== "");
+
+  if (submitted) {
+    return (
+      <div className="flex flex-col items-center gap-3 text-center" style={{ fontFamily: "'Noto Sans', sans-serif" }}>
+        <p className="text-sm font-semibold" style={{ color: "#1E6B45" }}>
+          Account created successfully. You can now log in.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <form
       className="flex flex-col gap-5"
-      onSubmit={(e) => e.preventDefault()}
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (!canSubmit || !selectedRole) return;
+        const roleLabel = selectedRole === "field-officer" ? "Field Officer" : selectedRole === "district-officer" ? "District Officer" : "Control Officer";
+        const profile = {
+          profileName: fullName.trim(),
+          profileInitials: fullName.trim().split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase(),
+          officerId: `NER-${selectedRole === "field-officer" ? "FO" : selectedRole === "district-officer" ? "DO" : "CO"}-NEW`,
+          department: department.trim() || "NER Operations",
+          region: district || "North Eastern Region",
+          phone: "",
+          email: email.trim(),
+          label: roleLabel,
+          lastLogin: "Current session",
+          status: "Active",
+        };
+        localStorage.setItem("ner-profile", JSON.stringify(profile));
+        localStorage.setItem("ner-registration-email", email.trim().toLowerCase());
+        setSubmitted(true);
+      }}
       style={{ fontFamily: "'Noto Sans', sans-serif" }}
     >
       {/* Full Name */}
@@ -58,6 +93,8 @@ export default function CreateAccountTab() {
         <input
           id="full-name"
           type="text"
+          value={fullName}
+          onChange={(e) => setFullName(e.target.value)}
           placeholder="As per official records"
           className="glass-field accent-green"
         />
@@ -68,35 +105,23 @@ export default function CreateAccountTab() {
         <input
           id="official-email"
           type="text"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
           placeholder="officer@gov.in or employee ID"
           className="glass-field accent-green"
         />
       </Field>
 
-      {/* District / Region */}
-      <Field label="District / Region" htmlFor="district">
-        <div className="relative">
-          <select
-            id="district"
-            defaultValue=""
-            className="glass-field accent-green has-toggle appearance-none"
-          >
-            <option value="" disabled>
-              Select your district or region
-            </option>
-            {DISTRICTS.map((d) => (
-              <option key={d} value={d}>
-                {d}
-              </option>
-            ))}
-          </select>
-          <span
-            className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none"
-            style={{ color: "#5B6472" }}
-          >
-            <ChevronDownIcon />
-          </span>
-        </div>
+      {/* Password */}
+      <Field label="Department" htmlFor="department">
+        <input
+          id="department"
+          type="text"
+          value={department}
+          onChange={(e) => setDepartment(e.target.value)}
+          placeholder="Department or division"
+          className="glass-field accent-green"
+        />
       </Field>
 
       {/* Password */}
@@ -161,7 +186,10 @@ export default function CreateAccountTab() {
                   name="role"
                   value={id!}
                   checked={active}
-                  onChange={() => setSelectedRole(id)}
+                  onChange={() => {
+                    setSelectedRole(id);
+                    if (id === "control-room") setDistrict("");
+                  }}
                   className="sr-only"
                 />
                 <div
@@ -210,6 +238,34 @@ export default function CreateAccountTab() {
         })}
       </fieldset>
 
+      {selectedRole !== null && selectedRole !== "control-room" && (
+        <Field label="District / Region" htmlFor="district">
+          <div className="relative">
+            <select
+              id="district"
+              value={district}
+              onChange={(e) => setDistrict(e.target.value)}
+              className="glass-field accent-green has-toggle appearance-none"
+            >
+              <option value="" disabled>
+                Select District
+              </option>
+              {DISTRICTS.map((d) => (
+                <option key={d} value={d}>
+                  {d}
+                </option>
+              ))}
+            </select>
+            <span
+              className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none"
+              style={{ color: "#5B6472" }}
+            >
+              <ChevronDownIcon />
+            </span>
+          </div>
+        </Field>
+      )}
+
       {/* Submit */}
       <button
         type="submit"
@@ -238,9 +294,7 @@ export default function CreateAccountTab() {
         className="text-xs text-center leading-relaxed"
         style={{ color: "#5B6472", fontFamily: "'Noto Sans', sans-serif" }}
       >
-        New accounts require administrator approval before first login.
-        <br />
-        You will be notified by email once access is granted.
+        Your account will be ready to use immediately after creation.
       </p>
     </form>
   );

@@ -1,6 +1,9 @@
-import { useState } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import type { Role } from '@/roles';
-import ProfilePanel from '@/components/ProfilePanel';
+import ProfilePanel, { type ProfileMeta } from '@/components/ProfilePanel';
+import { profileService } from '@/lib/profileService';
+import { getIncidents, subscribeToIncidents } from '@/lib/incidentStore';
+import { getTasks, subscribeToTasks } from '@/lib/taskStore';
 
 const NAV = [
   { key: 'dashboard', label: 'Dashboard',     icon: '⊞' },
@@ -49,33 +52,19 @@ const TITLES: Record<string, string> = {
 
 const ROLE_META: Record<Role, {
   label: string; short: string; subtitle: string; nav: typeof NAV;
-  contextLabel: string; context: string; profileName: string; profileInitials: string;
-  officerId: string; department: string; region: string; phone: string;
-  email: string; lastLogin: string; status: string;
+  contextLabel: string; context: string;
 }> = {
   control: {
     label: 'Control Officer', short: 'CO', subtitle: 'NER Command Center', nav: CR_NAV,
     contextLabel: 'Active Region', context: 'North Eastern Region',
-    profileName: 'Anjali Rao', profileInitials: 'AR',
-    officerId: 'NER-CO-0087', department: 'Regional Command & Coordination',
-    region: 'North Eastern Region (8 States)', phone: '+91 98640 12087',
-    email: 'anjali.rao@ner.gov.in', lastLogin: 'Today, 08:14 AM IST', status: 'Active',
   },
   district: {
     label: 'District Officer', short: 'DO', subtitle: 'NER Operations Portal', nav: NAV,
     contextLabel: 'Active District', context: 'Kamrup Metro, Assam',
-    profileName: 'Dinesh Joshi', profileInitials: 'DJ',
-    officerId: 'NER-DO-0342', department: 'District Disaster & Logistics Management',
-    region: 'Kamrup Metro, Assam', phone: '+91 94350 20342',
-    email: 'dinesh.joshi@assam.gov.in', lastLogin: 'Today, 09:02 AM IST', status: 'Active',
   },
   field: {
     label: 'Field Officer', short: 'FO', subtitle: 'NER Field Operations', nav: FO_NAV,
     contextLabel: 'Assigned Area', context: 'Dimapur District, Nagaland',
-    profileName: 'Ravi Kumar', profileInitials: 'RK',
-    officerId: 'NER-FO-1024', department: 'Field Operations & Incident Response',
-    region: 'Dimapur District, Nagaland', phone: '+91 88764 51024',
-    email: 'ravi.kumar@nagaland.gov.in', lastLogin: 'Today, 10:05 AM IST', status: 'On Duty',
   },
 };
 
@@ -95,14 +84,114 @@ const ROLE_SWITCHER: { key: Role; label: string; short: string }[] = [
 ];
 
 export default function Shell({ role, page, setPage, onSwitchRole, onLogout, children }: ShellProps) {
-  const meta = ROLE_META[role] ?? ROLE_META.district;
+  const baseMeta = ROLE_META[role] ?? ROLE_META.district;
+  const [incidents, setIncidents] = useState(() => getIncidents());
+  const [tasks, setTasks] = useState(() => getTasks());
+  const [profile, setProfile] = useState<ProfileMeta>(() => {
+    try {
+      return profileService.getProfile();
+    } catch (error) {
+      console.error('Error loading profile:', error);
+      // Return a safe fallback profile
+      return {
+        label: baseMeta.label,
+        profileName: 'User',
+        profileInitials: 'U',
+        officerId: 'UNKNOWN',
+        department: 'Unknown',
+        region: 'Unknown',
+        phone: '',
+        email: '',
+        lastLogin: 'Unknown',
+        status: 'Active',
+      };
+    }
+  });
   const [collapsed, setCollapsed] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchOpen, setSearchOpen] = useState(false);
   const [now] = useState(
     new Date().toLocaleString('en-IN', {
       timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short',
     })
   );
+
+  useEffect(() => subscribeToIncidents(stored => setIncidents(stored)), []);
+  useEffect(() => subscribeToTasks(stored => setTasks(stored)), []);
+
+  // Subscribe to profile changes
+  useEffect(() => {
+    const unsubscribe = profileService.subscribe((updatedProfile) => {
+      try {
+        setProfile(updatedProfile);
+      } catch (error) {
+        console.error('Error updating profile:', error);
+      }
+    });
+    return unsubscribe;
+  }, []);
+
+  const navBadges = useMemo(() => {
+    const activeIncidents = incidents.filter(item => !['RESOLVED', 'CLOSED'].includes(item.status));
+    const activeTasks = tasks.filter(item => !['Completed', 'Closed'].includes(item.status));
+    const urgentIncidents = incidents.filter(item => ['PENDING_VERIFICATION', 'ACTIVE', 'ESCALATED', 'UNDER_REVIEW'].includes(item.status));
+    const districtAlerts = urgentIncidents.length + tasks.filter(task => ['New', 'In Progress', 'Escalated'].includes(task.status)).length;
+    const fieldAlerts = tasks.filter(task => task.assignedOfficer === 'FO-1024' && ['New', 'In Progress', 'Escalated'].includes(task.status)).length + incidents.filter(incident =>
+      ['PENDING_VERIFICATION', 'ACTIVE', 'ESCALATED', 'UNDER_REVIEW'].includes(incident.status) &&
+      (incident.assignedOfficer === 'FO-1024' || incident.reportedBy === 'FO-1024' || /dimapur/i.test(incident.location) || /nh-/i.test(incident.route))
+    ).length;
+    const controlAlerts = incidents.filter(item => ['CRITICAL', 'HIGH'].includes(item.severity) && !['RESOLVED', 'CLOSED'].includes(item.status)).length + tasks.filter(task => ['CRITICAL', 'HIGH'].includes(task.priority) && !['Completed', 'Closed'].includes(task.status)).length;
+
+    return {
+      incidents: activeIncidents.length,
+      tasks: activeTasks.length,
+      alerts: role === 'field' ? fieldAlerts : role === 'control' ? controlAlerts : districtAlerts,
+    };
+  }, [incidents, tasks, role]);
+
+  const searchResults = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) return [];
+
+    const results: Array<{ label: string; route: string; type: string; }> = [];
+
+    incidents.forEach(incident => {
+      const haystack = [incident.type, incident.location, incident.route, incident.description, incident.severity].join(' ').toLowerCase();
+      if (haystack.includes(query)) {
+        results.push({
+          label: `${incident.type} · ${incident.location}`,
+          route: role === 'field' ? 'fo-dashboard' : role === 'control' ? 'incidents' : 'incidents',
+          type: 'Incident',
+        });
+      }
+    });
+
+    tasks.forEach(task => {
+      const haystack = [task.title, task.location, task.description, task.status, task.priority].join(' ').toLowerCase();
+      if (haystack.includes(query)) {
+        results.push({
+          label: `${task.title} · ${task.location}`,
+          route: role === 'field' ? 'fo-tasks' : role === 'control' ? 'tasks' : 'tasks',
+          type: 'Task',
+        });
+      }
+    });
+
+    return results.slice(0, 6);
+  }, [incidents, tasks, role, searchQuery]);
+
+  const saveProfile = async (updates: Partial<ProfileMeta>) => {
+    const result = await profileService.updateProfile(updates);
+    if (result.success) {
+      const newRole = profileService.getCurrentRole();
+      if (newRole && newRole !== role) {
+        onSwitchRole(newRole);
+      }
+    }
+    return result;
+  };
 
   return (
     /*
@@ -127,14 +216,14 @@ export default function Shell({ role, page, setPage, onSwitchRole, onLogout, chi
           style={{ borderColor: '#0F2538' }}>
           <div className="w-7 h-7 rounded flex items-center justify-center flex-shrink-0 text-xs font-bold"
             style={{ background: '#D7A73A', color: '#17212B' }}>
-            {meta.short}
+            {baseMeta.short}
           </div>
           <div>
             <div className="font-semibold text-sm leading-tight" style={{ color: '#FAF7F0' }}>
-              {meta.label}
+              {profile.label}
             </div>
             <div className="text-xs leading-tight" style={{ color: '#4A6A82' }}>
-              {meta.subtitle}
+              {baseMeta.subtitle}
             </div>
           </div>
         </div>
@@ -144,10 +233,10 @@ export default function Shell({ role, page, setPage, onSwitchRole, onLogout, chi
           style={{ background: '#122840', borderColor: '#0F2538' }}>
           <div className="text-xs uppercase tracking-widest mb-0.5"
             style={{ color: '#4A6A82', fontSize: 10 }}>
-            {meta.contextLabel}
+            {baseMeta.contextLabel}
           </div>
           <div className="font-medium text-sm" style={{ color: '#FAF7F0' }}>
-            {meta.context}
+            {profile.region}
           </div>
           <div className="flex items-center gap-1.5 mt-1">
             <span className="w-1.5 h-1.5 rounded-full inline-block" style={{ background: '#5DBB8A' }} />
@@ -162,7 +251,7 @@ export default function Shell({ role, page, setPage, onSwitchRole, onLogout, chi
             Main Menu
           </div>
           <ul className="space-y-0.5">
-            {meta.nav.map(item => {
+            {baseMeta.nav.map(item => {
               const active = page === item.key;
               return (
                 <li key={item.key}>
@@ -182,10 +271,14 @@ export default function Shell({ role, page, setPage, onSwitchRole, onLogout, chi
                       {item.icon}
                     </span>
                     <span className="flex-1">{item.label}</span>
-                    {(item as any).badge && (
+                    {((item.key === 'incidents' && navBadges.incidents) ||
+                      (item.key === 'tasks' && navBadges.tasks) ||
+                      (item.key === 'alerts' && navBadges.alerts) ||
+                      (item.key === 'fo-tasks' && navBadges.tasks) ||
+                      (item.key === 'fo-alerts' && navBadges.alerts)) && (
                       <span className="text-xs rounded-full px-1.5 py-0.5 font-semibold min-w-[20px] text-center"
-                        style={{ background: (item as any).badge > 2 ? '#BE2424' : '#D7A73A', color: 'white' }}>
-                        {(item as any).badge}
+                        style={{ background: navBadges.alerts > 2 || navBadges.incidents > 2 ? '#BE2424' : '#D7A73A', color: 'white' }}>
+                        {item.key === 'incidents' ? navBadges.incidents : item.key === 'tasks' || item.key === 'fo-tasks' ? navBadges.tasks : navBadges.alerts}
                       </span>
                     )}
                   </button>
@@ -225,7 +318,16 @@ export default function Shell({ role, page, setPage, onSwitchRole, onLogout, chi
             <button key={item.label}
               className="w-full flex items-center gap-3 px-3 py-2 rounded text-sm text-left transition-colors"
               style={{ color: '#4A6A82' }}
-              onClick={item.label === 'Logout' ? onLogout : undefined}
+              onClick={() => {
+                if (item.label === 'Logout') {
+                  profileService.clearSession();
+                  onLogout?.();
+                  return;
+                }
+                if (item.label === 'Help & Support') {
+                  setHelpOpen(true);
+                }
+              }}
               onMouseEnter={e => ((e.currentTarget as HTMLElement).style.color = '#FAF7F0')}
               onMouseLeave={e => ((e.currentTarget as HTMLElement).style.color = '#4A6A82')}>
               <span className="w-4 text-center">{item.icon}</span>
@@ -268,7 +370,7 @@ export default function Shell({ role, page, setPage, onSwitchRole, onLogout, chi
           <nav className="flex items-center gap-1 min-w-0" style={{ fontSize: 10 }}>
             <span className="uppercase tracking-widest" style={{ color: 'rgba(90,102,112,0.8)' }}>NER PLATFORM</span>
             <span style={{ color: 'rgba(180,162,136,0.8)', margin: '0 2px' }}>›</span>
-            <span className="uppercase tracking-widest" style={{ color: 'rgba(90,102,112,0.8)' }}>{meta.label.toUpperCase()}</span>
+            <span className="uppercase tracking-widest" style={{ color: 'rgba(90,102,112,0.8)' }}>{profile.label.toUpperCase()}</span>
             <span style={{ color: 'rgba(180,162,136,0.8)', margin: '0 2px' }}>›</span>
             <span className="uppercase tracking-widest font-semibold" style={{ color: '#17324D' }}>
               {TITLES[page] ?? page.toUpperCase()}
@@ -278,20 +380,55 @@ export default function Shell({ role, page, setPage, onSwitchRole, onLogout, chi
           <div className="flex-1" />
 
           {/* Search */}
-          <div className="relative hidden sm:block">
-            <input
-              placeholder="Search incidents, routes, officers…"
-              className="pl-8 pr-4 py-1.5 rounded border text-xs outline-none"
-              style={{
-                background: 'rgba(245,236,220,0.6)',
-                borderColor: 'rgba(180,162,136,0.5)',
-                color: '#17212B',
-                width: 220,
-                backdropFilter: 'blur(8px)',
-              }}
-            />
-            <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs"
-              style={{ color: '#8A9098' }}>⊕</span>
+          <div className="relative hidden sm:block z-30">
+            <div className="relative" style={{ width: 220 }}>
+              <input
+                value={searchQuery}
+                onFocus={() => setSearchOpen(true)}
+                onBlur={() => window.setTimeout(() => setSearchOpen(false), 120)}
+                onChange={event => {
+                  setSearchQuery(event.target.value);
+                  setSearchOpen(true);
+                }}
+                placeholder="Search incidents, routes, officers…"
+                className="pl-8 pr-4 py-1.5 rounded border text-xs outline-none w-full"
+                style={{
+                  background: 'rgba(245,236,220,0.6)',
+                  borderColor: 'rgba(180,162,136,0.5)',
+                  color: '#17212B',
+                  backdropFilter: 'blur(8px)',
+                }}
+              />
+              <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs"
+                style={{ color: '#8A9098' }}>⊕</span>
+            </div>
+            {searchOpen && searchQuery.trim() && (
+              <div className="absolute right-0 top-full mt-2 w-[320px] max-w-[calc(100vw-24px)] rounded-lg border shadow-xl z-40 overflow-hidden" style={{ background: '#FFFDF9', borderColor: 'rgba(180,162,136,0.45)' }}>
+                {searchResults.length ? (
+                  <div className="max-h-64 overflow-y-auto p-1">
+                    {searchResults.map(result => (
+                      <button
+                        key={`${result.type}-${result.label}`}
+                        onClick={() => {
+                          setPage(result.route);
+                          setSearchQuery('');
+                          setSearchOpen(false);
+                        }}
+                        className="w-full text-left px-3 py-2 rounded text-xs transition-colors"
+                        style={{ color: '#17212B' }}
+                        onMouseEnter={e => ((e.currentTarget as HTMLElement).style.background = 'rgba(23,50,77,0.06)')}
+                        onMouseLeave={e => ((e.currentTarget as HTMLElement).style.background = 'transparent')}
+                      >
+                        <div className="font-semibold">{result.type}</div>
+                        <div style={{ color: '#5A6670' }}>{result.label}</div>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="px-3 py-2 text-xs" style={{ color: '#5A6670' }}>No matching incidents or tasks found.</div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Time */}
@@ -332,11 +469,11 @@ export default function Shell({ role, page, setPage, onSwitchRole, onLogout, chi
             onMouseLeave={e => ((e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.45)')}>
             <span className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0"
               style={{ background: '#17324D', color: 'white', boxShadow: '0 0 0 2px rgba(215,167,58,0.55)' }}>
-              {meta.profileInitials}
+              {profile.profileInitials}
             </span>
             <span className="hidden sm:flex flex-col items-start leading-none">
-              <span className="text-xs font-semibold whitespace-nowrap" style={{ color: '#16222E' }}>{meta.profileName}</span>
-              <span className="whitespace-nowrap mt-0.5" style={{ fontSize: 10, color: '#6B7885' }}>{meta.label}</span>
+              <span className="text-xs font-semibold whitespace-nowrap" style={{ color: '#16222E' }}>{profile.profileName}</span>
+              <span className="whitespace-nowrap mt-0.5" style={{ fontSize: 10, color: '#6B7885' }}>{profile.label}</span>
             </span>
             <span className="hidden sm:block text-xs" style={{ color: '#8A9098' }}>▾</span>
           </button>
@@ -350,8 +487,35 @@ export default function Shell({ role, page, setPage, onSwitchRole, onLogout, chi
         </main>
       </div>
 
+      {helpOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 backdrop-blur-[2px]" onClick={() => setHelpOpen(false)}>
+          <div className="w-full max-w-md rounded-2xl border p-5 shadow-2xl" style={{ background: '#FFFDF9', borderColor: 'rgba(180,162,136,0.5)' }} onClick={event => event.stopPropagation()}>
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="font-semibold text-lg" style={{ color: '#17212B' }}>Help & Support</h2>
+              <button onClick={() => setHelpOpen(false)} className="text-sm" style={{ color: '#5A6670' }}>✕</button>
+            </div>
+
+            <div className="space-y-3 text-sm" style={{ color: '#5A6670' }}>
+              <div className="rounded-lg border p-3" style={{ borderColor: 'rgba(180,162,136,0.45)', background: 'rgba(250,247,240,0.9)' }}>
+                <div className="font-semibold mb-1" style={{ color: '#17212B' }}>Operations desk</div>
+                <div>+91 98765 43210</div>
+              </div>
+              <div className="rounded-lg border p-3" style={{ borderColor: 'rgba(180,162,136,0.45)', background: 'rgba(250,247,240,0.9)' }}>
+                <div className="font-semibold mb-1" style={{ color: '#17212B' }}>Support mail</div>
+                <div>ops-support@ner.gov.in</div>
+              </div>
+            </div>
+
+            <div className="mt-4 flex gap-2">
+              <button onClick={() => { window.location.href = 'tel:+919876543210'; }} className="flex-1 rounded px-3 py-2 text-xs font-medium" style={{ background: '#17324D', color: 'white' }}>Call Desk</button>
+              <button onClick={() => { window.location.href = 'mailto:ops-support@ner.gov.in'; }} className="flex-1 rounded px-3 py-2 text-xs font-medium" style={{ border: '1px solid rgba(180,162,136,0.5)', color: '#17212B', background: 'rgba(245,236,220,0.7)' }}>Email Support</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Role-aware profile / settings slide-over */}
-      <ProfilePanel open={profileOpen} onClose={() => setProfileOpen(false)} meta={meta} />
+      <ProfilePanel open={profileOpen} onClose={() => setProfileOpen(false)} meta={profile} onSave={saveProfile} />
     </div>
   );
 }

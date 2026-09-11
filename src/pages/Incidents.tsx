@@ -1,7 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { SeverityBadge, StatusBadge } from '@/components/StatusBadge';
 import { incidents as initialIncidents } from '@/data/demo';
 import type { Incident, IncidentStatus } from '@/data/demo';
+import { getIncidents, subscribeToIncidents, updateIncident } from '@/lib/incidentStore';
+import { createTaskFromIncident } from '@/lib/taskStore';
 
 const tabs: { key: string; label: string; filter: (i: Incident) => boolean }[] = [
   { key: 'all', label: 'All', filter: () => true },
@@ -21,18 +23,22 @@ function getTimelineStep(status: IncidentStatus) {
   return 0;
 }
 
-function IncidentDetail({ inc, onClose, onVerify, onAssign }: {
+function IncidentDetail({ inc, onClose, onVerify, onAssign, onStatusChange, onCreateTask }: {
   inc: Incident; onClose: () => void;
   onVerify: (id: string) => void; onAssign: (id: string) => void;
+  onStatusChange: (id: string, status: IncidentStatus) => void;
+  onCreateTask: (id: string) => void;
 }) {
   const step = getTimelineStep(inc.status);
-  return (
-    <div className="fixed inset-0 z-50 flex">
-      <div className="flex-1 bg-black/30" onClick={onClose} />
-      <div className="w-full max-w-xl overflow-y-auto shadow-2xl"
+  const [preview, setPreview] = useState<{ name: string; type: string; dataUrl: string } | null>(null);
+  const [actionMessage, setActionMessage] = useState<string | null>(null);
+        return (
+          <div className="fixed inset-0 z-50 flex">
+            <div className="flex-1 bg-black/30" onClick={onClose} />
+            <div className="w-full max-w-2xl overflow-y-auto shadow-2xl"
         style={{ background: 'rgba(250,247,240,0.82)', borderLeft: '1px solid rgba(180,162,136,0.55)' }}>
         <div className="px-5 py-4 border-b flex items-start justify-between"
-          style={{ borderColor: 'rgba(180,162,136,0.55)', background: 'rgba(238,228,210,0.88)' }}>
+                style={{ borderColor: 'rgba(180,162,136,0.55)', background: 'rgba(238,228,210,0.96)' }}>
           <div>
             <div className="font-mono text-xs mb-1" style={{ color: '#5A6670' }}>{inc.id}</div>
             <h2 className="font-semibold text-lg" style={{ color: '#17212B' }}>{inc.type} — {inc.location}</h2>
@@ -45,6 +51,17 @@ function IncidentDetail({ inc, onClose, onVerify, onAssign }: {
         </div>
 
         <div className="px-5 py-4 space-y-5">
+          <div className="rounded-lg border p-3 flex flex-wrap items-center justify-between gap-3" style={{ background: 'rgba(238,228,210,0.88)', borderColor: 'rgba(180,162,136,0.55)' }}>
+            <div>
+              <div className="text-xs uppercase tracking-wider" style={{ color: '#8A9098' }}>Current workflow state</div>
+              <div className="mt-1"><StatusBadge status={inc.status} /></div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {inc.verification === 'Pending' && <button onClick={() => { setActionMessage('Incident verified and moved to Active.'); onVerify(inc.id); }} className="text-xs font-medium px-3 py-2 rounded" style={{ background: '#17324D', color: 'white' }}>Verify</button>}
+              {inc.status !== 'ESCALATED' && inc.status !== 'RESOLVED' && <button onClick={() => { setActionMessage('Incident escalated to Control Officer.'); onStatusChange(inc.id, 'ESCALATED'); }} className="text-xs font-medium px-3 py-2 rounded border" style={{ color: '#BE2424', borderColor: '#F5B8B8', background: '#FEE9E9' }}>Escalate</button>}
+              {inc.status === 'ACTIVE' && <button onClick={() => { setActionMessage('Incident marked as resolved.'); onStatusChange(inc.id, 'RESOLVED'); }} className="text-xs font-medium px-3 py-2 rounded border" style={{ color: '#2D6B4F', borderColor: '#A8D4B8', background: '#EAF4EE' }}>Resolve</button>}
+            </div>
+          </div>
           {/* Timeline */}
           <div>
             <h3 className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: '#5A6670' }}>Response Timeline</h3>
@@ -99,6 +116,34 @@ function IncidentDetail({ inc, onClose, onVerify, onAssign }: {
             <p className="text-xs leading-relaxed" style={{ color: '#5A6670' }}>{inc.description}</p>
           </div>
 
+          {inc.evidence && inc.evidence.length > 0 && (
+            <div>
+              <h3 className="text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: '#5A6670' }}>Evidence</h3>
+              <div className="grid grid-cols-2 gap-3">
+                {inc.evidence.map(file => (
+                  <button type="button" key={`${inc.id}-${file.name}`} onClick={() => setPreview(file)}
+                    className="rounded-lg border overflow-hidden text-left" style={{ borderColor: 'rgba(180,162,136,0.55)' }}>
+                    {file.type.startsWith('image/') ? (
+                      <img src={file.dataUrl} alt={file.name} className="h-32 w-full object-cover" />
+                    ) : (
+                      <div className="h-32 flex items-center justify-center" style={{ background: 'rgba(238,228,210,0.88)', color: '#17324D' }}>Video evidence</div>
+                    )}
+                    <div className="px-2 py-1.5 text-xs truncate" style={{ color: '#2F6F7E' }}>{file.name}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {preview && (
+            <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 p-4" onClick={() => setPreview(null)}>
+              <div className="relative max-w-4xl max-h-[90vh] rounded-lg overflow-hidden" onClick={event => event.stopPropagation()} style={{ background: '#17212B' }}>
+                <button type="button" onClick={() => setPreview(null)} className="absolute top-2 right-2 z-10 rounded-full px-2 py-1 text-lg" aria-label="Close evidence preview" style={{ background: 'rgba(0,0,0,0.65)', color: 'white' }}>✕</button>
+                {preview.type.startsWith('image/') ? <img src={preview.dataUrl} alt={preview.name} className="max-h-[85vh] max-w-[90vw] object-contain" /> : <video src={preview.dataUrl} controls className="max-h-[85vh] max-w-[90vw]" />}
+              </div>
+            </div>
+          )}
+
           {/* AI Risk */}
           <div className="rounded-lg border p-3" style={{ background: '#FEF8E6', borderColor: '#F5DFA8' }}>
             <div className="flex items-center gap-1.5 mb-2">
@@ -125,32 +170,33 @@ function IncidentDetail({ inc, onClose, onVerify, onAssign }: {
             <h3 className="text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: '#5A6670' }}>Actions</h3>
             <div className="flex flex-wrap gap-2">
               {inc.verification === 'Pending' && (
-                <button onClick={() => onVerify(inc.id)}
+                <button onClick={() => { setActionMessage('Incident verified and moved to Active.'); onVerify(inc.id); }}
                   className="text-xs font-medium px-3 py-2 rounded border"
                   style={{ background: '#17324D', color: 'white', borderColor: '#17324D' }}>
                   ✓ Verify Incident
                 </button>
               )}
-              <button onClick={() => onAssign(inc.id)}
+              <button onClick={() => { setActionMessage('Officer assignment saved.'); onAssign(inc.id); }}
                 className="text-xs font-medium px-3 py-2 rounded border"
                 style={{ background: '#2F6F7E', color: 'white', borderColor: '#2F6F7E' }}>
                 Assign Officer
               </button>
-              <button className="text-xs font-medium px-3 py-2 rounded border"
+              <button onClick={() => { setActionMessage('Task created from this incident.'); onCreateTask(inc.id); }} className="text-xs font-medium px-3 py-2 rounded border"
                 style={{ borderColor: 'rgba(180,162,136,0.55)', color: '#5A6670' }}>
                 Create Task
               </button>
-              <button className="text-xs font-medium px-3 py-2 rounded border"
+              <button onClick={() => { setActionMessage('Incident escalated to Control Officer.'); onStatusChange(inc.id, 'ESCALATED'); }} className="text-xs font-medium px-3 py-2 rounded border"
                 style={{ borderColor: '#F5B8B8', color: '#BE2424', background: '#FEE9E9' }}>
                 Escalate
               </button>
               {inc.status === 'ACTIVE' && (
-                <button className="text-xs font-medium px-3 py-2 rounded border"
+                <button onClick={() => { setActionMessage('Incident marked as resolved.'); onStatusChange(inc.id, 'RESOLVED'); }} className="text-xs font-medium px-3 py-2 rounded border"
                   style={{ borderColor: '#A8D4B8', color: '#2D6B4F', background: '#EAF4EE' }}>
                   ✓ Resolve Incident
                 </button>
               )}
             </div>
+            {actionMessage && <p className="text-xs mt-2" style={{ color: '#2D6B4F' }}>{actionMessage}</p>}
           </div>
         </div>
       </div>
@@ -160,18 +206,44 @@ function IncidentDetail({ inc, onClose, onVerify, onAssign }: {
 
 export default function Incidents() {
   const [tab, setTab] = useState('all');
+  const [severityFilter, setSeverityFilter] = useState('All Severity');
+  const [typeFilter, setTypeFilter] = useState('All Types');
   const [selected, setSelected] = useState<string | null>(null);
-  const [incList, setIncList] = useState(initialIncidents);
+  const [incList, setIncList] = useState<Incident[]>(() => [...initialIncidents, ...getIncidents()]);
+
+  useEffect(() => subscribeToIncidents(stored => setIncList([...initialIncidents, ...stored])), []);
 
   const current = tabs.find(t => t.key === tab)!;
-  const filtered = incList.filter(current.filter);
+  const filtered = incList.filter(current.filter).filter(incident =>
+    (severityFilter === 'All Severity' || incident.severity === severityFilter.toUpperCase()) &&
+    (typeFilter === 'All Types' || incident.type === typeFilter)
+  );
   const selectedInc = incList.find(i => i.id === selected);
 
   const handleVerify = (id: string) => {
+    updateIncident(id, { verification: 'Verified', status: 'ACTIVE' });
     setIncList(prev => prev.map(i => i.id === id ? { ...i, verification: 'Verified' as const, status: 'ACTIVE' as const } : i));
   };
   const handleAssign = (id: string) => {
+    updateIncident(id, { assignedOfficer: 'FO-101', status: 'ACTIVE' });
     setIncList(prev => prev.map(i => i.id === id ? { ...i, assignedOfficer: 'FO-101', status: 'ACTIVE' as const } : i));
+  };
+  const handleStatusChange = (id: string, status: IncidentStatus) => {
+    updateIncident(id, { status });
+    setIncList(prev => prev.map(i => i.id === id ? { ...i, status } : i));
+  };
+  const handleCreateTask = (id: string) => {
+    const incident = incList.find(item => item.id === id);
+    if (!incident) return;
+    createTaskFromIncident({
+      incidentId: incident.id,
+      title: `Follow up: ${incident.type} at ${incident.location}`,
+      location: incident.location,
+      priority: incident.severity,
+      description: incident.description,
+    });
+    setIncList(prev => prev.map(i => i.id === id ? { ...i, status: i.status === 'PENDING_VERIFICATION' ? 'ACTIVE' : i.status } : i));
+    updateIncident(id, { status: 'ACTIVE' });
   };
 
   return (
@@ -228,19 +300,21 @@ export default function Incidents() {
             {filtered.length} incident{filtered.length !== 1 ? 's' : ''}
           </span>
           <div className="flex gap-2">
-            <select className="text-xs px-2 py-1.5 rounded border"
+            <select value={severityFilter} onChange={event => setSeverityFilter(event.target.value)} className="text-xs px-2 py-1.5 rounded border"
               style={{ borderColor: 'rgba(180,162,136,0.55)', background: 'rgba(250,247,240,0.82)' }}>
               <option>All Severity</option>
               <option>Critical</option>
               <option>High</option>
               <option>Moderate</option>
             </select>
-            <select className="text-xs px-2 py-1.5 rounded border"
+            <select value={typeFilter} onChange={event => setTypeFilter(event.target.value)} className="text-xs px-2 py-1.5 rounded border"
               style={{ borderColor: 'rgba(180,162,136,0.55)', background: 'rgba(250,247,240,0.82)' }}>
               <option>All Types</option>
               <option>Flood</option>
               <option>Landslide</option>
               <option>Road Blockage</option>
+              <option>Accident</option>
+              <option>Infrastructure Damage</option>
             </select>
           </div>
         </div>
@@ -289,6 +363,7 @@ export default function Incidents() {
               ))}
             </tbody>
           </table>
+          {filtered.length === 0 && <div className="px-4 py-12 text-center text-sm" style={{ color: '#8A9098' }}>No incidents match this view.</div>}
         </div>
       </div>
 
@@ -298,6 +373,8 @@ export default function Incidents() {
           onClose={() => setSelected(null)}
           onVerify={handleVerify}
           onAssign={handleAssign}
+          onStatusChange={handleStatusChange}
+          onCreateTask={handleCreateTask}
         />
       )}
     </div>

@@ -1289,8 +1289,6 @@ export type Database = {
       }
       user_roles: {
         Row: {
-          approved_at: string | null
-          approved_by: string | null
           created_at: string
           district_id: string | null
           id: string
@@ -1299,8 +1297,6 @@ export type Database = {
           user_id: string
         }
         Insert: {
-          approved_at?: string | null
-          approved_by?: string | null
           created_at?: string
           district_id?: string | null
           id?: string
@@ -1309,8 +1305,6 @@ export type Database = {
           user_id: string
         }
         Update: {
-          approved_at?: string | null
-          approved_by?: string | null
           created_at?: string
           district_id?: string | null
           id?: string

@@ -212,11 +212,11 @@ Flutter signup form
   -> verification email
   -> auth.users record
   -> database trigger creates profiles row
-  -> administrator assigns approved role
+  -> database trigger creates the selected active role
   -> user signs in
 ```
 
-A new account must not receive an operational role automatically. Until approval, the profile remains inactive or pending.
+New accounts receive the selected operational role immediately. Control Room accounts are region-wide; field and district officers are scoped to their selected district.
 
 ### Login flow
 
@@ -225,7 +225,7 @@ Flutter login form
   -> Supabase Auth signInWithPassword
   -> session restored in secure SDK storage
   -> profile + role query
-  -> active/approved check
+  -> active account check
   -> GoRouter role redirect
 ```
 
@@ -264,8 +264,6 @@ user_roles
 - role text not null
 - district_id uuid nullable
 - is_active boolean not null default true
-- approved_by uuid nullable
-- approved_at timestamptz nullable
 - created_at timestamptz not null default now()
 ```
 
@@ -1001,7 +999,7 @@ The following values must be selected before staging:
 The backend connection is ready for staging when:
 
 - A verified Supabase user can sign in and restore a session.
-- The user's approved role is loaded from the database.
+- The user's active role is loaded from the database.
 - Flutter role guards prevent unauthorized navigation.
 - RLS tests pass for field, district, and control-room access.
 - A field officer can create an incident with a restricted media upload.

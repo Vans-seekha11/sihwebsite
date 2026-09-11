@@ -11,7 +11,7 @@ export default function AIInsights() {
             <h1 className="font-semibold text-2xl" style={{ color: '#17212B' }}>AI Insights</h1>
           </div>
           <p className="text-sm mt-0.5" style={{ color: '#5A6670' }}>
-            AI-generated predictions and recommendations — DEMO DATA — Not guaranteed facts
+            AI-generated predictions and recommendations
           </p>
         </div>
         <div className="text-xs px-3 py-1.5 rounded border" style={{ background: '#FEF8E6', borderColor: '#F5DFA8', color: '#C4861A' }}>

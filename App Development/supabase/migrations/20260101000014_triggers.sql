@@ -69,7 +69,7 @@ begin
   values (
     new.id,
     coalesce(new.raw_user_meta_data->>'full_name', ''),
-    false  -- must be approved by admin before operational access
+    true
   )
   on conflict (id) do nothing;
   return new;

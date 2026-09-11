@@ -8,8 +8,6 @@ create table public.user_roles (
   role           public.user_role_enum  not null,
   district_id    uuid,                              -- FK added after districts table is created
   is_active      boolean                not null default true,
-  approved_by    uuid                   references auth.users (id),
-  approved_at    timestamptz,
   created_at     timestamptz            not null default now(),
   unique (user_id)                                 -- one active role per user
 );

@@ -62,7 +62,7 @@ export default function Logistics() {
 
       <div className="rounded-xl border shadow-sm overflow-hidden" style={{ background: 'rgba(250,247,240,0.82)', borderColor: 'rgba(180,162,136,0.55)' }}>
         <div className="px-4 py-3 border-b" style={{ borderColor: 'rgba(180,162,136,0.55)', background: 'rgba(238,228,210,0.88)' }}>
-          <h2 className="font-semibold text-base" style={{ color: '#17212B' }}>Logistics Table — DEMO DATA</h2>
+          <h2 className="font-semibold text-base" style={{ color: '#17212B' }}>Logistics Table</h2>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">

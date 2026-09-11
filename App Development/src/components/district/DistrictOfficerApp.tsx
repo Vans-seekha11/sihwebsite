@@ -72,9 +72,11 @@ const NAV: { id: NavId; label: string; Icon: typeof Home; badge?: number }[] = [
 export default function DistrictOfficerApp({
   role,
   onSignOut,
+  onProfileUpdated,
 }: {
   role: Role;
   onSignOut: () => void;
+  onProfileUpdated: () => Promise<void>;
 }) {
   void role;
   const [screen, setScreen] = useState<NavId>("overview");
@@ -138,6 +140,7 @@ export default function DistrictOfficerApp({
           profileRole="district"
           onClose={() => setProfileOpen(false)}
           onSignOut={onSignOut}
+          onUpdated={() => void onProfileUpdated()}
         />
       )}
     </div>

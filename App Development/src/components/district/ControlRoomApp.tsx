@@ -69,7 +69,7 @@ const NAV: { id: NavId; label: string; Icon: typeof Home }[] = [
 
 const GOLD = "#d9a441";
 
-export default function ControlRoomApp({ onSignOut }: { onSignOut: () => void }) {
+export default function ControlRoomApp({ onSignOut, onProfileUpdated }: { onSignOut: () => void; onProfileUpdated: () => Promise<void> }) {
   const [screen, setScreen] = useState<NavId>("command");
   const [drawer, setDrawer] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
@@ -145,6 +145,7 @@ export default function ControlRoomApp({ onSignOut }: { onSignOut: () => void })
           profileRole="control"
           onClose={() => setProfileOpen(false)}
           onSignOut={onSignOut}
+          onUpdated={() => void onProfileUpdated()}
         />
       )}
     </div>

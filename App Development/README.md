@@ -88,7 +88,7 @@ npm run supabase:status
 npm run supabase:reset
 ```
 
-`supabase db reset` applies every migration and loads `supabase/seed.sql`. The seed creates deterministic development data and fixed demo identities with randomly generated passwords on each reset. It does not commit a usable password. Create a local Auth user through the signup flow or Supabase Studio, then assign an approved role in a local-only workflow.
+`supabase db reset` applies every migration and loads `supabase/seed.sql`. The seed creates deterministic development data and fixed demo identities with randomly generated passwords on each reset. It does not commit a usable password. Create a local Auth user through the signup flow; the selected role is active immediately.
 
 Useful local URLs:
 
@@ -227,7 +227,6 @@ The backend uses PostGIS geography columns and RLS policies. Review `supabase/mi
 ### Documentation
 
 - `docs/BACKEND_CONNECTION.md`
-- `src/imports/frontend-requirements-design-system.md`
 
 ## Troubleshooting
 
@@ -258,7 +257,7 @@ Update the URL used by the browser accordingly.
 
 ### Auth user is inactive
 
-New users are intentionally inactive until an approved role is assigned. Use a local development-only SQL workflow or Supabase Studio to set `profiles.is_active` and insert the matching `user_roles` record. Never bypass this approval model in production.
+New users are active immediately after registration. Operational role assignment remains separate from account creation.
 
 ## Security rules
 

@@ -5,13 +5,28 @@ export default function LoginTab({ onLogin }: { onLogin?: (identity: string) => 
   const [showPassword, setShowPassword] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   return (
     <form
       className="flex flex-col gap-5"
-      onSubmit={(e) => {
+      onSubmit={async (e) => {
         e.preventDefault();
-        onLogin?.(email);
+        if (!email.trim()) {
+          alert('Please enter your email or employee ID');
+          return;
+        }
+        setIsSubmitting(true);
+        try {
+          onLogin?.(email);
+          // Small delay to allow the parent component to handle the login
+          await new Promise(resolve => setTimeout(resolve, 100));
+        } catch (error) {
+          console.error('Login error:', error);
+          alert('Login failed. Please try again.');
+        } finally {
+          setIsSubmitting(false);
+        }
       }}
       style={{ fontFamily: "'Noto Sans', sans-serif" }}
     >
@@ -77,20 +92,25 @@ export default function LoginTab({ onLogin }: { onLogin?: (identity: string) => 
 
       <button
         type="submit"
+        disabled={isSubmitting}
         className="w-full py-2.5 text-sm font-semibold transition-colors mt-1"
         style={{
-          backgroundColor: "#0E2A47",
+          backgroundColor: isSubmitting ? "#1B3F63" : "#0E2A47",
           color: "#ffffff",
           borderRadius: "4px",
           border: "1px solid #0E2A47",
           fontFamily: "'Public Sans', sans-serif",
-          cursor: "pointer",
+          cursor: isSubmitting ? "not-allowed" : "pointer",
           letterSpacing: "0.01em",
+          opacity: isSubmitting ? 0.7 : 1,
         }}
-        onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "#1B3F63")}
-        onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "#0E2A47")}
       >
-        Log In
+        {isSubmitting ? (
+          <span className="flex items-center justify-center gap-2">
+            <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+            Logging in...
+          </span>
+        ) : "Log In"}
       </button>
 
       <p

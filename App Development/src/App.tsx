@@ -48,7 +48,7 @@ const WIPE_DURATION = 1600; // ms — must match .ner-wipe-disc in index.css
 const WIPE_SWAP = 640; // ms — screen content swaps once the disc has covered
 
 export default function App() {
-  const { loading: authLoading, user, role: dbRole, signOut } = useAuth();
+  const { loading: authLoading, user, role: dbRole, signOut, refreshProfile } = useAuth();
 
   const [splashDone, setSplashDone] = useState(false);
   const [loginInitialMode, setLoginInitialMode] = useState<"signin" | "create">("signin");
@@ -145,11 +145,11 @@ export default function App() {
             }}
           />
         ) : activeRole === "control" ? (
-          <ControlRoomApp onSignOut={handleSignOut} />
+          <ControlRoomApp onSignOut={handleSignOut} onProfileUpdated={refreshProfile} />
         ) : activeRole === "district" ? (
-          <DistrictOfficerApp role={activeRole} onSignOut={handleSignOut} />
+          <DistrictOfficerApp role={activeRole} onSignOut={handleSignOut} onProfileUpdated={refreshProfile} />
         ) : (
-          <FieldOfficerApp onSignOut={handleSignOut} />
+          <FieldOfficerApp onSignOut={handleSignOut} onProfileUpdated={refreshProfile} />
         )}
 
         {wipe && <SplashTransition {...wipe} />}
@@ -159,7 +159,7 @@ export default function App() {
 }
 
 // ── Field Officer app: drawer nav + dashboard + live active-trip machine ──
-function FieldOfficerApp({ onSignOut }: { onSignOut: () => void }) {
+function FieldOfficerApp({ onSignOut, onProfileUpdated }: { onSignOut: () => void; onProfileUpdated: () => Promise<void> }) {
   const [nav, setNav] = useState<FieldNav>("dashboard");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
@@ -303,7 +303,7 @@ function FieldOfficerApp({ onSignOut }: { onSignOut: () => void }) {
         onNavigate={go}
       />
 
-      {profileOpen && <ProfileScreen profileRole="field" onClose={() => setProfileOpen(false)} onSignOut={onSignOut} />}
+      {profileOpen && <ProfileScreen profileRole="field" onClose={() => setProfileOpen(false)} onSignOut={onSignOut} onUpdated={() => void onProfileUpdated()} />}
       {compareOpen && <CompareModal onClose={() => setCompareOpen(false)} />}
 
       {toast && (

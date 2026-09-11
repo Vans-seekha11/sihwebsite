@@ -1,16 +1,52 @@
+import { useState, useEffect } from 'react';
 import { Card, CardHeader, PageHeader, BORDER, SURFACE_2, NAVY, TEAL } from './ui';
+import { profileService } from '@/lib/profileService';
 
-const INFO = [
-  ['Officer Name', 'Ravi Kumar'],
-  ['Officer ID', 'FO-1042'],
-  ['Designation', 'Field Officer — Grade II'],
-  ['Assigned District', 'Dimapur, Nagaland'],
-  ['Assigned Area', 'Dimapur–Kohima Corridor (NH-29)'],
-  ['Contact', '+91 98••• ••210 · ravi.kumar@ner.gov.in'],
-  ['Availability', 'On Duty'],
-  ['Last Synchronization', '2 min ago'],
-  ['Device / Connectivity', 'Android · Online (4G)'],
-];
+export default function Profile() {
+  const [profile, setProfile] = useState(() => {
+    try {
+      return profileService.getProfile();
+    } catch (error) {
+      console.error('Error loading profile in FO Profile:', error);
+      // Return a safe fallback
+      return {
+        label: 'Field Officer',
+        profileName: 'Field Officer',
+        profileInitials: 'FO',
+        officerId: 'UNKNOWN',
+        department: 'Field Operations',
+        region: 'Unknown District',
+        phone: '',
+        email: '',
+        lastLogin: 'Unknown',
+        status: 'Active',
+      };
+    }
+  });
+
+  // Subscribe to profile changes
+  useEffect(() => {
+    const unsubscribe = profileService.subscribe((updatedProfile) => {
+      try {
+        setProfile(updatedProfile);
+      } catch (error) {
+        console.error('Error updating profile in FO Profile:', error);
+      }
+    });
+    return unsubscribe;
+  }, []);
+
+  const INFO = [
+    ['Officer Name', profile.profileName],
+    ['Officer ID', profile.officerId],
+    ['Designation', profile.label],
+    ['Assigned District', profile.region],
+    ['Assigned Area', profile.region],
+    ['Contact', `${profile.phone} · ${profile.email}`],
+    ['Availability', profile.status],
+    ['Last Synchronization', profile.lastLogin],
+    ['Device / Connectivity', 'Android · Online (4G)'],
+  ];
 
 const SECTIONS = [
   { icon: '◬', title: 'Notification Preferences', sub: 'Alerts, task assignments and sync updates' },
@@ -18,20 +54,19 @@ const SECTIONS = [
   { icon: '⚿', title: 'Security', sub: 'Password, device sessions and PIN lock' },
 ];
 
-export default function Profile() {
   return (
     <div className="space-y-6 max-w-4xl">
       <PageHeader title="Profile" sub="Field officer account and device settings" />
 
       <Card className="p-5">
         <div className="flex items-center gap-4 mb-5">
-          <div className="w-16 h-16 rounded-full flex items-center justify-center text-xl font-bold" style={{ background: NAVY, color: 'white' }}>RK</div>
+          <div className="w-16 h-16 rounded-full flex items-center justify-center text-xl font-bold" style={{ background: NAVY, color: 'white' }}>{profile.profileInitials}</div>
           <div>
-            <div className="font-semibold text-lg" style={{ color: '#17212B' }}>Ravi Kumar</div>
-            <div className="text-sm" style={{ color: '#5A6670' }}>Field Officer — Grade II · FO-1042</div>
+            <div className="font-semibold text-lg" style={{ color: '#17212B' }}>{profile.profileName}</div>
+            <div className="text-sm" style={{ color: '#5A6670' }}>{profile.label} · {profile.officerId}</div>
             <span className="inline-flex items-center gap-1.5 text-xs px-2 py-0.5 rounded border mt-1.5"
               style={{ background: '#EAF4EE', borderColor: '#A8D4B8', color: '#2D6B4F' }}>
-              <span className="w-1.5 h-1.5 rounded-full bg-green-500 inline-block" /> On Duty · Online
+              <span className="w-1.5 h-1.5 rounded-full bg-green-500 inline-block" /> {profile.status} · Online
             </span>
           </div>
         </div>

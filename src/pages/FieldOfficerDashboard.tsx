@@ -1,6 +1,9 @@
-import { useState } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { SeverityBadge, StatusBadge, AccessibilityBadge } from '@/components/StatusBadge';
 import type { Severity } from '@/data/demo';
+import { profileService } from '@/lib/profileService';
+import { getIncidents, subscribeToIncidents } from '@/lib/incidentStore';
+import { getTasks, subscribeToTasks, updateTask } from '@/lib/taskStore';
 
 /* ────────────────────────────────────────────────────────────────
    Field Officer Dashboard
@@ -15,13 +18,6 @@ const SURFACE = 'rgba(250,247,240,0.82)';
 const BORDER = 'rgba(180,162,136,0.55)';
 const SURFACE_2 = 'rgba(238,228,210,0.88)';
 
-const kpis = [
-  { label: 'Assigned Tasks', value: '08', icon: '☑', color: '#17324D', sub: 'This shift' },
-  { label: 'Pending Tasks', value: '03', icon: '◷', color: '#C4861A', sub: 'Awaiting start' },
-  { label: 'Active Incidents', value: '05', icon: '◆', color: '#C25A1A', sub: 'Within 10 km' },
-  { label: 'Critical Alerts', value: '02', icon: '◬', color: '#BE2424', sub: 'Needs action' },
-];
-
 interface FOTask {
   id: string;
   title: string;
@@ -31,11 +27,16 @@ interface FOTask {
   status: string;
 }
 
-const priorityTasks: FOTask[] = [
-  { id: 'FO-1024', title: 'Inspect flooded road section', location: 'Dimapur–Kohima Route (NH-29)', priority: 'CRITICAL', due: 'Today, 4:30 PM', status: 'Pending' },
-  { id: 'FO-1021', title: 'Verify landslide clearance progress', location: 'Zubza Ghat, Km 34', priority: 'HIGH', due: 'Today, 6:00 PM', status: 'In Progress' },
-  { id: 'FO-1019', title: 'Confirm bridge load capacity', location: 'Chumukedima Bypass', priority: 'MODERATE', due: 'Tomorrow, 10:00 AM', status: 'Accepted' },
-];
+function toDashboardTask(task: ReturnType<typeof getTasks>[number]): FOTask {
+  return {
+    id: task.id,
+    title: task.title,
+    location: task.location,
+    priority: task.priority,
+    due: task.deadline,
+    status: task.status === 'New' ? 'Assigned' : task.status,
+  };
+}
 
 interface NearbyIncident {
   type: string;
@@ -46,13 +47,6 @@ interface NearbyIncident {
   time: string;
   status: string;
 }
-
-const nearbyIncidents: NearbyIncident[] = [
-  { type: 'Flood', icon: '≈', distance: '2.4 km away', location: 'NH-29', severity: 'CRITICAL', time: '12 min ago', status: 'ACTIVE' },
-  { type: 'Road Blockage', icon: '⊗', distance: '5.1 km away', location: 'Local Route 04', severity: 'HIGH', time: '28 min ago', status: 'ACTIVE' },
-  { type: 'Landslide', icon: '⛰', distance: '7.8 km away', location: 'Zubza Ghat', severity: 'MODERATE', time: '1 hr ago', status: 'UNDER_REVIEW' },
-  { type: 'Accident', icon: '⊙', distance: '9.2 km away', location: 'Chumukedima Bypass', severity: 'HIGH', time: '2 hr ago', status: 'RESOLVED' },
-];
 
 const quickActions = [
   { label: 'Report Flood', icon: '≈', color: '#2F6F7E' },
@@ -71,11 +65,87 @@ function Card({ children, className = '' }: { children: React.ReactNode; classNa
 }
 
 export default function FieldOfficerDashboard({ setPage }: { setPage?: (p: string) => void }) {
-  const [startedTasks, setStartedTasks] = useState<Record<string, string>>({});
+  const [priorityTasks, setPriorityTasks] = useState<FOTask[]>(() => getTasks().filter(task => task.assignedOfficer === 'FO-1024').map(toDashboardTask));
+  const [incidents, setIncidents] = useState(() => getIncidents());
+
+  useEffect(() => subscribeToIncidents(stored => setIncidents(stored)), []);
+
+  const areaIncidents = useMemo(() => {
+    const relevant = incidents.filter(incident =>
+      ['PENDING_VERIFICATION', 'ACTIVE', 'ESCALATED', 'UNDER_REVIEW'].includes(incident.status) &&
+      (incident.assignedOfficer === 'FO-1024' ||
+        incident.reportedBy === 'FO-1024' ||
+        incident.location.toLowerCase().includes('dimapur') ||
+        incident.route.toLowerCase().includes('nh-'))
+    );
+
+    return relevant.slice(0, 4).map(incident => ({
+      type: incident.type,
+      icon: incident.type === 'Flood' ? '≈' : incident.type === 'Road Blockage' ? '⊗' : incident.type === 'Landslide' ? '⛰' : incident.type === 'Accident' ? '⊙' : '⌂',
+      distance: `${Math.max(2, Math.min(18, incident.riskScore / 5))} km`,
+      location: incident.location,
+      severity: incident.severity,
+      time: incident.reportedTime,
+      status: incident.status,
+    }));
+  }, [incidents]);
+
+  const highestSeverity = areaIncidents.length
+    ? areaIncidents.reduce((max, incident) => {
+        const order = { CRITICAL: 4, HIGH: 3, MODERATE: 2, LOW: 1 };
+        return order[incident.severity] > order[max.severity] ? incident : max;
+      }, areaIncidents[0]).severity
+    : 'LOW';
+
+  const accessibilityScore = areaIncidents.length
+    ? Math.max(32, 100 - areaIncidents.reduce((sum, incident) => sum + (incident.severity === 'CRITICAL' ? 26 : incident.severity === 'HIGH' ? 18 : incident.severity === 'MODERATE' ? 10 : 4), 0) / areaIncidents.length)
+    : 72;
+
+  const kpis = [
+    { label: 'Assigned Tasks', value: String(priorityTasks.length), icon: '☑', color: '#17324D', sub: priorityTasks.length ? 'Live' : 'No data' },
+    { label: 'Pending Tasks', value: String(priorityTasks.filter(task => task.status === 'Assigned' || task.status === 'Accepted').length), icon: '◷', color: '#C4861A', sub: priorityTasks.length ? 'Live' : 'No data' },
+    { label: 'Active Incidents', value: String(areaIncidents.length), icon: '◆', color: '#C25A1A', sub: areaIncidents.length ? 'Live' : 'No data' },
+    { label: 'Critical Alerts', value: String(areaIncidents.filter(incident => incident.severity === 'CRITICAL' || incident.severity === 'HIGH').length), icon: '◬', color: '#BE2424', sub: areaIncidents.length ? 'Live' : 'No data' },
+  ];
+  const [profile, setProfile] = useState(() => {
+    try {
+      return profileService.getProfile();
+    } catch (error) {
+      console.error('Error loading profile in FieldOfficerDashboard:', error);
+      // Return a safe fallback
+      return {
+        label: 'Field Officer',
+        profileName: 'Field Officer',
+        profileInitials: 'FO',
+        officerId: 'UNKNOWN',
+        department: 'Field Operations',
+        region: 'Unknown District',
+        phone: '',
+        email: '',
+        lastLogin: 'Unknown',
+        status: 'Active',
+      };
+    }
+  });
+
+  // Subscribe to profile changes
+  useEffect(() => {
+    const unsubscribe = profileService.subscribe((updatedProfile) => {
+      try {
+        setProfile(updatedProfile);
+      } catch (error) {
+        console.error('Error updating profile in FieldOfficerDashboard:', error);
+      }
+    });
+    return unsubscribe;
+  }, []);
+
+  useEffect(() => subscribeToTasks(tasks => setPriorityTasks(tasks.filter(task => task.assignedOfficer === 'FO-1024').map(toDashboardTask))), []);
 
   const startTask = (id: string) => {
-    setStartedTasks(s => ({ ...s, [id]: 'starting' }));
-    setTimeout(() => setStartedTasks(s => ({ ...s, [id]: 'started' })), 900);
+    const task = priorityTasks.find(item => item.id === id);
+    if (!task || (task.status !== 'Assigned' && task.status !== 'Accepted')) return;
+    updateTask(id, { status: 'In Progress' });
   };
 
   return (
@@ -86,7 +156,7 @@ export default function FieldOfficerDashboard({ setPage }: { setPage?: (p: strin
         <div>
           <h1 className="font-semibold text-2xl" style={{ color: '#17212B' }}>Field Officer Dashboard</h1>
           <p className="text-sm mt-0.5" style={{ color: '#5A6670' }}>
-            Ravi Kumar · Assigned Area: <span style={{ color: '#2F6F7E', fontWeight: 500 }}>Dimapur District, Nagaland</span>
+            {profile.profileName} · Assigned Area: <span style={{ color: '#2F6F7E', fontWeight: 500 }}>{profile.region}</span>
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -132,34 +202,33 @@ export default function FieldOfficerDashboard({ setPage }: { setPage?: (p: strin
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <div className="text-xs mb-1" style={{ color: '#8A9098' }}>Accessibility Score</div>
-                <AccessibilityBadge score={72} />
+                <AccessibilityBadge score={Math.round(accessibilityScore)} />
               </div>
               <div>
                 <div className="text-xs mb-1" style={{ color: '#8A9098' }}>Risk Level</div>
-                <SeverityBadge severity="HIGH" />
+                <SeverityBadge severity={highestSeverity as Severity} />
               </div>
               <div>
                 <div className="text-xs mb-1" style={{ color: '#8A9098' }}>Nearby Incidents</div>
-                <div className="text-xl font-bold" style={{ color: '#17212B' }}>04</div>
+                <div className="text-xl font-bold" style={{ color: '#17212B' }}>{areaIncidents.length}</div>
               </div>
               <div>
                 <div className="text-xs mb-1" style={{ color: '#8A9098' }}>Weather</div>
-                <div className="text-sm font-medium" style={{ color: '#17212B' }}>Heavy Rain ☂</div>
+                <div className="text-sm font-medium" style={{ color: '#17212B' }}>{areaIncidents.length ? 'Active monitoring' : 'No critical conditions'}</div>
               </div>
             </div>
 
-            {/* Accessibility bar */}
             <div>
               <div className="flex items-center justify-between text-xs mb-1" style={{ color: '#5A6670' }}>
-                <span>Route accessibility</span><span className="font-semibold">72 / 100</span>
+                <span>Route accessibility</span><span className="font-semibold">{Math.round(accessibilityScore)}%</span>
               </div>
               <div className="h-2 rounded-full overflow-hidden" style={{ background: BORDER }}>
-                <div className="h-full rounded-full" style={{ width: '72%', background: '#C25A1A' }} />
+                <div className="h-full rounded-full" style={{ width: `${Math.round(accessibilityScore)}%`, background: accessibilityScore <= 50 ? '#C25A1A' : accessibilityScore <= 75 ? '#C4861A' : '#2D6B4F' }} />
               </div>
             </div>
 
             <div className="flex items-center justify-between pt-1 text-xs" style={{ color: '#8A9098' }}>
-              <span>Last updated: 2 min ago</span>
+              <span>Last updated: just now</span>
               <button className="font-medium" style={{ color: '#2F6F7E' }}>Refresh ↻</button>
             </div>
           </div>
@@ -179,8 +248,8 @@ export default function FieldOfficerDashboard({ setPage }: { setPage?: (p: strin
             </button>
           </div>
           <div className="divide-y" style={{ borderColor: SURFACE_2 }}>
-            {nearbyIncidents.map((inc, i) => (
-              <div key={i} className="px-4 py-3 flex items-center gap-4 transition-colors hover:bg-black/[0.02]">
+            {areaIncidents.length ? areaIncidents.map((inc, i) => (
+              <div key={`${inc.type}-${i}`} className="px-4 py-3 flex items-center gap-4 transition-colors hover:bg-black/[0.02]">
                 <div className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 text-lg"
                   style={{ background: SURFACE_2, color: '#17324D' }}>
                   {inc.icon}
@@ -196,7 +265,11 @@ export default function FieldOfficerDashboard({ setPage }: { setPage?: (p: strin
                 <StatusBadge status={inc.status} />
                 <button className="text-xs font-medium" style={{ color: '#2F6F7E' }}>View →</button>
               </div>
-            ))}
+            )) : (
+              <div className="px-4 py-8 text-center text-sm" style={{ color: '#8A9098' }}>
+                No active incidents in your assigned area right now.
+              </div>
+            )}
           </div>
         </Card>
       </div>
@@ -216,7 +289,7 @@ export default function FieldOfficerDashboard({ setPage }: { setPage?: (p: strin
         </div>
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 p-4">
           {priorityTasks.map(task => {
-            const state = startedTasks[task.id];
+            const canStart = task.status === 'Assigned' || task.status === 'Accepted';
             return (
               <div key={task.id} className="rounded-lg border p-4 flex flex-col transition-all"
                 style={{ background: SURFACE_2, borderColor: BORDER }}>
@@ -235,18 +308,19 @@ export default function FieldOfficerDashboard({ setPage }: { setPage?: (p: strin
                 </div>
                 <button
                   onClick={() => startTask(task.id)}
-                  disabled={!!state}
+                  disabled={!canStart}
                   className="w-full text-xs font-medium px-3 py-2 rounded transition-all"
                   style={{
-                    background: state === 'started' ? '#EAF4EE' : '#17324D',
-                    color: state === 'started' ? '#2D6B4F' : 'white',
+                    background: canStart ? '#17324D' : '#EAF4EE',
+                    color: canStart ? 'white' : '#2D6B4F',
                     minHeight: 44,
                   }}>
-                  {state === 'starting' ? 'Starting…' : state === 'started' ? 'Task Started ✓' : 'Start Task'}
+                  {canStart ? 'Start Task' : task.status === 'In Progress' ? 'Task Started ✓' : task.status}
                 </button>
               </div>
             );
           })}
+          {priorityTasks.length === 0 && <p className="p-4 text-sm" style={{ color: '#8A9098' }}>No tasks assigned yet.</p>}
         </div>
       </Card>
 

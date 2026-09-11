@@ -1,12 +1,18 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { SeverityBadge, StatusBadge } from '@/components/StatusBadge';
-import { tasks } from '@/data/demo';
+import { getTasks, subscribeToTasks } from '@/lib/taskStore';
 
 const tabKeys = ['All', 'New', 'In Progress', 'Completed', 'Escalated'];
 
 export default function Tasks() {
   const [tab, setTab] = useState('All');
+  const [tasks, setTasks] = useState<ReturnType<typeof getTasks>>(() => getTasks());
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+
+  useEffect(() => subscribeToTasks(stored => setTasks(stored)), []);
+
   const filtered = tasks.filter(t => tab === 'All' || t.status === tab);
+  const selectedTask = tasks.find(task => task.id === selectedTaskId) ?? null;
 
   return (
     <div className="space-y-5 max-w-screen-2xl">
@@ -76,10 +82,12 @@ export default function Tasks() {
                   <td className="px-4 py-2.5 text-xs font-medium" style={{ color: '#17212B' }}>{task.deadline}</td>
                   <td className="px-4 py-2.5"><StatusBadge status={task.status} /></td>
                   <td className="px-4 py-2.5">
-                    <div className="flex gap-1">
-                      <button className="text-xs px-2 py-1 rounded border" style={{ borderColor: 'rgba(180,162,136,0.55)', color: '#2F6F7E' }}>View</button>
-                      <button className="text-xs px-2 py-1 rounded border" style={{ borderColor: 'rgba(180,162,136,0.55)', color: '#5A6670' }}>Assign</button>
-                    </div>
+                    <button
+                      onClick={() => setSelectedTaskId(selectedTaskId === task.id ? null : task.id)}
+                      className="text-xs px-2 py-1 rounded border"
+                      style={{ borderColor: 'rgba(180,162,136,0.55)', color: selectedTaskId === task.id ? '#17324D' : '#2F6F7E' }}>
+                      {selectedTaskId === task.id ? 'Hide' : 'View'}
+                    </button>
                   </td>
                 </tr>
               ))}
@@ -87,6 +95,27 @@ export default function Tasks() {
           </table>
         </div>
       </div>
+
+      {selectedTask && (
+        <div className="rounded-xl border p-4" style={{ background: 'rgba(250,247,240,0.82)', borderColor: 'rgba(180,162,136,0.55)' }}>
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className="text-xs uppercase tracking-wider" style={{ color: '#8A9098' }}>Task Details</div>
+              <h3 className="mt-1 font-semibold text-base" style={{ color: '#17212B' }}>{selectedTask.title}</h3>
+            </div>
+            <button onClick={() => setSelectedTaskId(null)} className="text-xs font-medium px-2 py-1 rounded border" style={{ borderColor: 'rgba(180,162,136,0.55)', color: '#5A6670' }}>Close</button>
+          </div>
+          <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3 text-xs" style={{ color: '#5A6670' }}>
+            <div><span className="font-semibold" style={{ color: '#17212B' }}>Task ID:</span> {selectedTask.id}</div>
+            <div><span className="font-semibold" style={{ color: '#17212B' }}>Priority:</span> <SeverityBadge severity={selectedTask.priority} /></div>
+            <div><span className="font-semibold" style={{ color: '#17212B' }}>Location:</span> {selectedTask.location}</div>
+            <div><span className="font-semibold" style={{ color: '#17212B' }}>Assigned:</span> {selectedTask.assignedOfficer ?? 'Unassigned'}</div>
+            <div><span className="font-semibold" style={{ color: '#17212B' }}>Created:</span> {selectedTask.created}</div>
+            <div><span className="font-semibold" style={{ color: '#17212B' }}>Deadline:</span> {selectedTask.deadline}</div>
+            <div className="md:col-span-2"><span className="font-semibold" style={{ color: '#17212B' }}>Description:</span> {selectedTask.description}</div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useRef, useState, useEffect } from 'react';
 import { SeverityBadge } from '@/components/StatusBadge';
 import type { Severity } from '@/data/demo';
+import { addIncident, type IncidentEvidence } from '@/lib/incidentStore';
 import { Card, PageHeader, BORDER, SURFACE_2, NAVY, TEAL, GOLD } from './ui';
 
 const STEPS = ['Incident Type', 'Location', 'Evidence', 'Details', 'Review', 'Submit'];
@@ -33,10 +34,14 @@ export default function ReportIncident({ setPage, presetType }: { setPage?: (p: 
   const [locName, setLocName] = useState('Dimapur–Kohima Route');
   const [gps, setGps] = useState<string | null>(null);
   const [gpsBusy, setGpsBusy] = useState(false);
-  const [evidence, setEvidence] = useState<string[]>([]);
+  const [gpsError, setGpsError] = useState<string | null>(null);
+  const [manualLocation, setManualLocation] = useState(false);
+  const [evidence, setEvidence] = useState<IncidentEvidence[]>([]);
+  const [evidenceError, setEvidenceError] = useState<string | null>(null);
   const [aiState, setAiState] = useState<'idle' | 'analyzing' | 'done'>('idle');
   const [submit, setSubmit] = useState<'idle' | 'submitting' | 'done'>('idle');
-  const incidentId = 'INC-2026-' + (1000 + Math.floor(Math.random() * 8999));
+  const [incidentId, setIncidentId] = useState('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Run the AI assessment when arriving at the Details step with enough info.
   useEffect(() => {
@@ -48,13 +53,75 @@ export default function ReportIncident({ setPage, presetType }: { setPage?: (p: 
   }, [step, aiState]);
 
   const captureGps = () => {
+    if (!navigator.geolocation) {
+      setGpsError('Location services are not available in this browser.');
+      return;
+    }
+
     setGpsBusy(true);
-    setTimeout(() => { setGps('25.9091° N, 93.7266° E'); setGpsBusy(false); }, 1100);
+    setGpsError(null);
+    navigator.geolocation.getCurrentPosition(
+      position => {
+        const { latitude, longitude } = position.coords;
+        setGps(`${Math.abs(latitude).toFixed(6)}° ${latitude >= 0 ? 'N' : 'S'}, ${Math.abs(longitude).toFixed(6)}° ${longitude >= 0 ? 'E' : 'W'}`);
+        setGpsBusy(false);
+      },
+      error => {
+        setGpsError(error.code === error.PERMISSION_DENIED ? 'Location permission was denied. You can allow it in browser settings or use the manual location fallback.' : 'Unable to detect your location. Try again.');
+        setGpsBusy(false);
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 },
+    );
+  };
+
+  const useManualLocation = () => {
+    setManualLocation(true);
+    setGps('Manual location — GPS permission unavailable');
+    setGpsError(null);
+  };
+
+  const readEvidence = (file: File) => new Promise<IncidentEvidence>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve({ name: file.name, type: file.type, size: file.size, dataUrl: String(reader.result) });
+    reader.onerror = () => reject(new Error(`Unable to read ${file.name}`));
+    reader.readAsDataURL(file);
+  });
+
+  const handleEvidenceChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? []);
+    if (!files.length) return;
+    setEvidenceError(null);
+
+    try {
+      const nextEvidence = await Promise.all(files.map(readEvidence));
+      setEvidence(current => [...current, ...nextEvidence]);
+    } catch (error) {
+      setEvidenceError(error instanceof Error ? error.message : 'Unable to upload evidence.');
+    } finally {
+      event.target.value = '';
+    }
   };
 
   const doSubmit = () => {
     setSubmit('submitting');
-    setTimeout(() => { setSubmit('done'); setStep(5); }, 1600);
+    try {
+      const incident = addIncident({
+        type: (type ?? 'Other') as Parameters<typeof addIncident>[0]['type'],
+        location: locName,
+        route,
+        severity,
+        reportedBy: 'Field Officer',
+        description: desc,
+        gpsCoords: gps ?? '',
+        evidence,
+      });
+      setIncidentId(incident.id);
+      setSubmit('done');
+      setStep(5);
+    } catch {
+      setEvidenceError('Incident could not be saved. Please remove large files and try again.');
+      setSubmit('idle');
+    }
   };
 
   const canNext =
@@ -133,13 +200,17 @@ export default function ReportIncident({ setPage, presetType }: { setPage?: (p: 
                   {gpsBusy ? '◉ Locating…' : gps ? '✓ GPS Captured — Re-detect' : '◉ Auto-detect GPS'}
                 </button>
               </div>
+              {gpsError && <p className="text-xs mt-2" style={{ color: '#BE2424' }}>{gpsError}</p>}
+              {gpsError && <button type="button" onClick={useManualLocation} className="text-xs font-medium mt-2 px-3 py-1.5 rounded border" style={{ borderColor: BORDER, color: TEAL }}>Use manual location</button>}
             </div>
             {/* Map placeholder in existing warm style */}
-            <div className="rounded-lg border overflow-hidden" style={{ borderColor: BORDER, height: 160,
+            <div className="relative rounded-lg border overflow-hidden" style={{ borderColor: BORDER, height: 160,
               background: 'linear-gradient(135deg, #D0956A 0%, #DFCBA8 45%, #BFD0C0 100%)' }}>
               <div className="w-full h-full flex items-center justify-center">
                 {gps
-                  ? <span className="text-xs px-2.5 py-1 rounded-full" style={{ background: 'rgba(250,247,240,0.85)', color: NAVY }}>◉ Pin dropped at current location</span>
+                  ? <><span className="absolute left-1/2 top-1/2 w-5 h-5 -translate-x-1/2 -translate-y-1/2 rounded-full border-4 border-white shadow-md" style={{ background: manualLocation ? '#C4861A' : '#BE2424' }} />
+                    <span className="absolute bottom-3 left-1/2 -translate-x-1/2 text-xs px-2.5 py-1 rounded-full whitespace-nowrap" style={{ background: 'rgba(250,247,240,0.85)', color: NAVY }}>Pin dropped at current location</span>
+                  </>
                   : <span className="text-xs" style={{ color: 'rgba(23,33,43,0.5)' }}>Capture GPS to place pin</span>}
               </div>
             </div>
@@ -158,23 +229,30 @@ export default function ReportIncident({ setPage, presetType }: { setPage?: (p: 
         {step === 2 && (
           <div className="space-y-4">
             <h3 className="font-semibold text-base" style={{ color: '#17212B' }}>Evidence</h3>
-            <button onClick={() => setEvidence(e => [...e, `IMG_${1000 + e.length}.jpg`])}
+            <input ref={fileInputRef} type="file" accept="image/*,video/*" multiple onChange={handleEvidenceChange} className="hidden" />
+            <button onClick={() => fileInputRef.current?.click()}
               className="w-full rounded-lg border border-dashed p-6 flex flex-col items-center gap-2 transition-colors"
               style={{ borderColor: BORDER, background: SURFACE_2, minHeight: 44 }}>
               <span className="text-2xl" style={{ color: TEAL }}>⊕</span>
               <span className="text-sm font-medium" style={{ color: '#17212B' }}>Capture / Upload Image</span>
               <span className="text-xs" style={{ color: '#8A9098' }}>Multiple images and a short video are supported. Timestamp &amp; GPS metadata are attached automatically.</span>
             </button>
+            {evidenceError && <p className="text-xs" style={{ color: '#BE2424' }}>{evidenceError}</p>}
             {evidence.length > 0 && (
               <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
                 {evidence.map((e, i) => (
-                  <div key={i} className="rounded-lg border overflow-hidden" style={{ borderColor: BORDER }}>
+                  <div key={`${e.name}-${i}`} className="rounded-lg border overflow-hidden" style={{ borderColor: BORDER }}>
                     <div className="h-20 flex items-center justify-center" style={{ background: 'linear-gradient(135deg,#DFCBA8,#BFD0C0)' }}>
-                      <span className="text-lg" style={{ color: NAVY }}>▤</span>
+                      {e.type.startsWith('image/') ? <img src={e.dataUrl} alt={e.name} className="h-full w-full object-cover" /> : <span className="text-lg" style={{ color: NAVY }}>▤</span>}
                     </div>
                     <div className="px-2 py-1.5">
-                      <div className="text-xs font-mono truncate" style={{ color: '#17212B' }}>{e}</div>
-                      <div style={{ fontSize: 10, color: '#8A9098' }}>◷ 12:04 · ◉ GPS tagged</div>
+                      <div className="flex items-center gap-1">
+                        <div className="text-xs font-mono truncate flex-1" style={{ color: '#17212B' }}>{e.name}</div>
+                        <button type="button" onClick={() => setEvidence(current => current.filter((_, index) => index !== i))}
+                          className="text-xs font-medium px-1.5 py-0.5 rounded border" aria-label={`Remove ${e.name}`}
+                          style={{ color: '#BE2424', borderColor: '#F5B8B8' }}>Remove</button>
+                      </div>
+                      <div style={{ fontSize: 10, color: '#8A9098' }}>{Math.ceil(e.size / 1024)} KB · ◉ GPS tagged</div>
                     </div>
                   </div>
                 ))}
@@ -301,7 +379,6 @@ export default function ReportIncident({ setPage, presetType }: { setPage?: (p: 
                   ))}
                 </div>
                 <div className="flex gap-2 justify-center">
-                  <button className="text-xs font-medium px-4 py-2 rounded border" style={{ borderColor: BORDER, color: TEAL, minHeight: 44 }}>View Incident</button>
                   <button onClick={() => setPage?.('fo-dashboard')} className="text-xs font-medium px-4 py-2 rounded" style={{ background: NAVY, color: 'white', minHeight: 44 }}>Back to Dashboard</button>
                 </div>
               </div>

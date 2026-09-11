@@ -130,28 +130,22 @@ on conflict (id) do nothing;
 -- ---------------------------------------------------------------------------
 -- User Roles
 -- ---------------------------------------------------------------------------
-insert into public.user_roles (id, user_id, role, district_id, is_active, approved_by, approved_at) values
+insert into public.user_roles (id, user_id, role, district_id, is_active) values
   ('20000000-0000-0000-0000-000000000001',
    '00000000-0000-0000-0000-000000000001',
    'field_officer',
    '10000000-0000-0000-0000-000000000009',   -- Ri Bhoi / Dimapur operational area
-   true,
-   '00000000-0000-0000-0000-000000000003',
-   now() - interval '30 days'),
+  true),
   ('20000000-0000-0000-0000-000000000002',
    '00000000-0000-0000-0000-000000000002',
    'district_officer',
    '10000000-0000-0000-0000-000000000001',   -- Kamrup Metro
-   true,
-   '00000000-0000-0000-0000-000000000003',
-   now() - interval '60 days'),
+  true),
   ('20000000-0000-0000-0000-000000000003',
    '00000000-0000-0000-0000-000000000003',
    'control_room',
    null,
-   true,
-   '00000000-0000-0000-0000-000000000003',
-   now() - interval '90 days')
+  true)
 on conflict (user_id) do nothing;
 
 -- ---------------------------------------------------------------------------

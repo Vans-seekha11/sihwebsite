@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { SeverityBadge } from '@/components/StatusBadge';
-import { alerts as ALL } from '@/data/demo';
+import { getIncidents, subscribeToIncidents, updateIncident } from '@/lib/incidentStore';
+import { getTasks, subscribeToTasks, updateTask } from '@/lib/taskStore';
 import type { Severity } from '@/data/demo';
 import { Card, PageHeader, BORDER, SURFACE_2, NAVY, TEAL } from './ui';
 
@@ -8,7 +9,6 @@ const TABS: { key: string; sev?: Severity }[] = [
   { key: 'Critical', sev: 'CRITICAL' },
   { key: 'High', sev: 'HIGH' },
   { key: 'Moderate', sev: 'MODERATE' },
-  { key: 'Information', sev: 'LOW' },
 ];
 
 const REC: Record<string, string> = {
@@ -23,14 +23,115 @@ const REC: Record<string, string> = {
 export default function Alerts() {
   const [tab, setTab] = useState('Critical');
   const [ack, setAck] = useState<Record<string, 'busy' | 'done'>>({});
+  const [incidents, setIncidents] = useState(() => getIncidents());
+  const [tasks, setTasks] = useState(() => getTasks());
+  const [expandedIds, setExpandedIds] = useState<string[]>([]);
+
+  useEffect(() => subscribeToIncidents(stored => setIncidents(stored)), []);
+  useEffect(() => subscribeToTasks(stored => setTasks(stored)), []);
+
+  const alertList = useMemo(() => {
+    const incidentAlerts = incidents.filter(incident =>
+      ['PENDING_VERIFICATION', 'ACTIVE', 'ESCALATED', 'UNDER_REVIEW'].includes(incident.status) ||
+      incident.severity === 'CRITICAL' ||
+      incident.severity === 'HIGH'
+    ).map(incident => ({
+      id: `incident-${incident.id}`,
+      severity: incident.severity,
+      category: incident.type === 'Road Blockage' ? 'Route Closure' : incident.type === 'Flood' ? 'Flood' : incident.type === 'Landslide' ? 'Landslide' : incident.status === 'ESCALATED' ? 'Escalation' : incident.type,
+      title: incident.status === 'ESCALATED' ? `Escalated: ${incident.type}` : `Pending ${incident.type.toLowerCase()} report`,
+      location: incident.location,
+      time: incident.reportedTime,
+      description: incident.description,
+      source: incident.reportedBy,
+      acknowledged: incident.status === 'RESOLVED',
+    }));
+
+    const taskAlerts = tasks.filter(task => task.assignedOfficer === 'FO-1024' && ['New', 'In Progress', 'Escalated'].includes(task.status)).map(task => ({
+      id: `task-${task.id}`,
+      severity: task.priority,
+      category: /logistics|convoy|supply/i.test(task.title) ? 'Logistics Delay' : task.status === 'Escalated' ? 'Escalation' : 'Task',
+      title: task.status === 'Escalated' ? `Task escalated: ${task.title}` : `Task update: ${task.title}`,
+      location: task.location,
+      time: task.created,
+      description: task.description,
+      source: task.assignedOfficer ?? 'System',
+      acknowledged: task.status === 'Completed' || task.status === 'Escalated',
+    }));
+
+    return [...incidentAlerts, ...taskAlerts].sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime());
+  }, [incidents, tasks]);
+
+  const syncIncident = (id: string, updates: Partial<{ assignedOfficer: string | null; status: string; verification: string }>) => {
+    setIncidents(current => current.map(item => item.id === id ? { ...item, ...updates } : item));
+    updateIncident(id, updates as Parameters<typeof updateIncident>[1]);
+  };
+
+  const syncTask = (id: string, updates: Partial<{ assignedOfficer: string | null; status: string }>) => {
+    setTasks(current => current.map(item => item.id === id ? { ...item, ...updates } : item));
+    updateTask(id, updates as Parameters<typeof updateTask>[1]);
+  };
 
   const acknowledge = (id: string) => {
     setAck(a => ({ ...a, [id]: 'busy' }));
-    setTimeout(() => setAck(a => ({ ...a, [id]: 'done' })), 900);
+
+    if (id.startsWith('incident-')) {
+      const incidentId = id.replace('incident-', '');
+      const incident = incidents.find(item => item.id === incidentId);
+      if (incident && incident.status !== 'RESOLVED') {
+        syncIncident(incidentId, { status: 'RESOLVED' });
+      }
+    }
+
+    if (id.startsWith('task-')) {
+      const taskId = id.replace('task-', '');
+      const task = tasks.find(item => item.id === taskId);
+      if (task && task.status !== 'Completed') {
+        syncTask(taskId, { status: 'Completed' });
+      }
+    }
+
+    setTimeout(() => setAck(a => ({ ...a, [id]: 'done' })), 600);
+  };
+
+  const assign = (id: string) => {
+    if (id.startsWith('incident-')) {
+      const incidentId = id.replace('incident-', '');
+      const incident = incidents.find(item => item.id === incidentId);
+      if (incident && incident.assignedOfficer !== 'FO-1024') {
+        syncIncident(incidentId, { assignedOfficer: 'FO-1024', status: 'ACTIVE' });
+      }
+      return;
+    }
+
+    if (id.startsWith('task-')) {
+      const taskId = id.replace('task-', '');
+      const task = tasks.find(item => item.id === taskId);
+      if (task && task.assignedOfficer !== 'FO-1024') {
+        syncTask(taskId, { assignedOfficer: 'FO-1024', status: 'In Progress' });
+      }
+    }
+  };
+
+  const escalate = (id: string) => {
+    if (id.startsWith('incident-')) {
+      const incidentId = id.replace('incident-', '');
+      syncIncident(incidentId, { status: 'ESCALATED', assignedOfficer: 'FO-1024' });
+      return;
+    }
+
+    if (id.startsWith('task-')) {
+      const taskId = id.replace('task-', '');
+      syncTask(taskId, { status: 'Escalated', assignedOfficer: 'FO-1024' });
+    }
+  };
+
+  const toggleExpanded = (id: string) => {
+    setExpandedIds(current => current.includes(id) ? current.filter(item => item !== id) : [...current, id]);
   };
 
   const sev = TABS.find(t => t.key === tab)?.sev;
-  const list = ALL.filter(a => a.severity === sev);
+  const list = alertList.filter(a => a.severity === sev);
 
   return (
     <div className="space-y-6 max-w-4xl">
@@ -38,7 +139,7 @@ export default function Alerts() {
 
       <div className="flex gap-1 border-b overflow-x-auto" style={{ borderColor: BORDER }}>
         {TABS.map(t => {
-          const n = ALL.filter(a => a.severity === t.sev).length;
+          const n = alertList.filter(a => a.severity === t.sev).length;
           const active = tab === t.key;
           return (
             <button key={t.key} onClick={() => setTab(t.key)}
@@ -68,14 +169,23 @@ export default function Alerts() {
                     <span className="text-xs font-semibold" style={{ color: '#C4861A' }}>Recommended Action: </span>
                     <span className="text-xs" style={{ color: '#5A6670' }}>{REC[a.category] ?? 'Review and respond per field protocol.'}</span>
                   </div>
-                  <div className="flex gap-2">
-                    <button className="text-xs font-medium px-3 py-2 rounded border" style={{ borderColor: BORDER, color: TEAL, minHeight: 40 }}>View Incident</button>
+                  <div className="flex gap-2 flex-wrap">
+                    <button onClick={() => toggleExpanded(a.id)} className="text-xs font-medium px-3 py-2 rounded border" style={{ borderColor: BORDER, color: TEAL, minHeight: 40 }}>
+                      {expandedIds.includes(a.id) ? 'Hide Details' : 'View Incident'}
+                    </button>
                     <button onClick={() => acknowledge(a.id)} disabled={!!state}
                       className="text-xs font-medium px-3 py-2 rounded transition-all disabled:opacity-70"
                       style={{ background: state === 'done' ? '#EAF4EE' : NAVY, color: state === 'done' ? '#2D6B4F' : 'white', minHeight: 40 }}>
                       {state === 'busy' ? 'Acknowledging…' : state === 'done' ? 'Acknowledged ✓' : 'Acknowledge'}
                     </button>
                   </div>
+                  {expandedIds.includes(a.id) && (
+                    <div className="mt-3 rounded-lg border p-2.5 text-xs" style={{ background: SURFACE_2, borderColor: BORDER, color: '#5A6670' }}>
+                      <div className="font-semibold mb-1" style={{ color: '#17212B' }}>Alert details</div>
+                      <div>{a.description}</div>
+                      <div className="mt-1">Source: {a.source}</div>
+                    </div>
+                  )}
                 </div>
               </div>
             </Card>

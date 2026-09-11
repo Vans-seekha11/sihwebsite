@@ -217,11 +217,6 @@ export default function MapViz({
           );
         })}
 
-        {/* DEMO DATA attribution */}
-        <text x={16} y={626}
-          style={{ fontSize: 8.5, fill: '#5A6670', fontFamily: 'Inter', letterSpacing: 0.3, opacity: 0.7 }}>
-          DEMO DATA · NER District Operations · Ministry of Development of North Eastern Region · Government of India
-        </text>
       </svg>
       </div>
 

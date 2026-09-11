@@ -1,7 +1,9 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { SeverityBadge, StatusBadge } from '@/components/StatusBadge';
 import type { Severity } from '@/data/demo';
 import { Card, PageHeader, BORDER, SURFACE, SURFACE_2, TEAL } from './ui';
+import { profileService } from '@/lib/profileService';
+import { getTasks, subscribeToTasks, updateTask } from '@/lib/taskStore';
 
 type Life = 'Assigned' | 'Accepted' | 'In Progress' | 'Completed' | 'Verified';
 
@@ -10,23 +12,60 @@ interface FOTask {
   assigned: string; due: string; status: Life;
 }
 
-const SEED: FOTask[] = [
-  { id: 'FO-1024', title: 'Inspect flooded road section', location: 'Dimapur–Kohima Route (NH-29)', priority: 'CRITICAL', assigned: 'Today, 10:05 AM', due: 'Today, 4:30 PM', status: 'Assigned' },
-  { id: 'FO-1021', title: 'Verify landslide clearance progress', location: 'Zubza Ghat, Km 34', priority: 'HIGH', assigned: 'Today, 08:40 AM', due: 'Today, 6:00 PM', status: 'In Progress' },
-  { id: 'FO-1019', title: 'Confirm bridge load capacity', location: 'Chumukedima Bypass', priority: 'MODERATE', assigned: 'Today, 07:15 AM', due: 'Tomorrow, 10:00 AM', status: 'Accepted' },
-  { id: 'FO-1015', title: 'Monitor water level markers', location: 'Dhansiri River crossing', priority: 'HIGH', assigned: 'Yesterday, 5:00 PM', due: 'Yesterday, 8:00 PM', status: 'Completed' },
-  { id: 'FO-1012', title: 'Photograph culvert damage', location: 'Local Route 04', priority: 'MODERATE', assigned: 'Yesterday, 2:00 PM', due: 'Yesterday, 4:00 PM', status: 'Verified' },
-  { id: 'FO-1009', title: 'Road condition survey — NH-29 Km 12', location: 'NH-29, Km 12', priority: 'LOW', assigned: '2 days ago', due: 'Yesterday, 12:00 PM', status: 'Assigned' },
-];
-
 const TABS = ['All', 'Pending', 'In Progress', 'Completed', 'Overdue'] as const;
 const NEXT: Record<Life, Life | null> = { Assigned: 'Accepted', Accepted: 'In Progress', 'In Progress': 'Completed', Completed: 'Verified', Verified: null };
 const ACTION_LABEL: Record<Life, string> = { Assigned: 'Accept Task', Accepted: 'Start Task', 'In Progress': 'Complete Task', Completed: 'Awaiting Verification', Verified: 'Verified' };
 
+function toFieldTask(task: ReturnType<typeof getTasks>[number]): FOTask {
+  return {
+    id: task.id,
+    title: task.title,
+    location: task.location,
+    priority: task.priority,
+    assigned: task.created,
+    due: task.deadline,
+    status: task.status === 'New' ? 'Assigned' : task.status as Life,
+  };
+}
+
 export default function MyTasks() {
   const [tab, setTab] = useState<typeof TABS[number]>('All');
-  const [tasks, setTasks] = useState(SEED);
+  const [tasks, setTasks] = useState<FOTask[]>(() => getTasks().filter(task => task.assignedOfficer === 'FO-1024').map(toFieldTask));
   const [busy, setBusy] = useState<string | null>(null);
+  const [profile, setProfile] = useState(() => {
+    try {
+      return profileService.getProfile();
+    } catch (error) {
+      console.error('Error loading profile in MyTasks:', error);
+      // Return a safe fallback
+      return {
+        label: 'Field Officer',
+        profileName: 'Field Officer',
+        profileInitials: 'FO',
+        officerId: 'UNKNOWN',
+        department: 'Field Operations',
+        region: 'Unknown District',
+        phone: '',
+        email: '',
+        lastLogin: 'Unknown',
+        status: 'Active',
+      };
+    }
+  });
+
+  // Subscribe to profile changes
+  useEffect(() => {
+    const unsubscribe = profileService.subscribe((updatedProfile) => {
+      try {
+        setProfile(updatedProfile);
+      } catch (error) {
+        console.error('Error updating profile in MyTasks:', error);
+      }
+    });
+    return unsubscribe;
+  }, []);
+
+  useEffect(() => subscribeToTasks(stored => setTasks(stored.filter(task => task.assignedOfficer === 'FO-1024').map(toFieldTask))), []);
 
   const advance = (id: string) => {
     const t = tasks.find(x => x.id === id);
@@ -34,6 +73,7 @@ export default function MyTasks() {
     setBusy(id);
     setTimeout(() => {
       setTasks(ts => ts.map(x => x.id === id ? { ...x, status: NEXT[x.status]! } : x));
+      updateTask(id, { status: NEXT[t.status]! });
       setBusy(null);
     }, 800);
   };
@@ -49,7 +89,7 @@ export default function MyTasks() {
 
   return (
     <div className="space-y-6 max-w-screen-2xl">
-      <PageHeader title="My Tasks" sub="Field tasks assigned to you · Ravi Kumar · Dimapur District" />
+      <PageHeader title="My Tasks" sub={`Field tasks assigned to you · ${profile.profileName} · ${profile.region}`} />
 
       {/* Tabs */}
       <div className="flex gap-1 border-b overflow-x-auto" style={{ borderColor: BORDER }}>

@@ -1,21 +1,73 @@
+import { useEffect, useMemo, useState } from 'react';
 import MapViz from '@/components/MapViz';
 import { SeverityBadge, StatusBadge } from '@/components/StatusBadge';
-import { incidents, routes, vehicles, alerts, aiInsights } from '@/data/demo';
+import { getIncidents, subscribeToIncidents } from '@/lib/incidentStore';
+import { getTasks, subscribeToTasks } from '@/lib/taskStore';
+import { routes, vehicles, aiInsights } from '@/data/demo';
+import type { Alert } from '@/data/demo';
 
-const kpis = [
-  { label: 'Active Incidents', value: '24', icon: '◆', change: '+3 vs yesterday', changeUp: true, color: '#BE2424' },
-  { label: 'Blocked Routes', value: '07', icon: '→', change: '+2 today', changeUp: true, color: '#C25A1A' },
-  { label: 'High-Risk Routes', value: '12', icon: '▲', change: 'Same as yesterday', changeUp: false, color: '#C4861A' },
-  { label: 'Active Logistics', value: '86', icon: '⊟', change: '-4 vs yesterday', changeUp: false, color: '#2F6F7E' },
-  { label: 'Pending Reports', value: '18', icon: '⊡', change: '+6 new', changeUp: true, color: '#17324D' },
-  { label: 'Avg Response Time', value: '42m', icon: '◷', change: '+8m vs target', changeUp: true, color: '#C4861A' },
-];
+const toMinutesSince = (reportedTime: string) => {
+  const parsed = new Date(reportedTime);
+  if (Number.isNaN(parsed.getTime())) return 0;
+  return Math.max(0, Math.round((Date.now() - parsed.getTime()) / 60000));
+};
+
+function buildAlerts(incidentList: ReturnType<typeof getIncidents>, taskList: ReturnType<typeof getTasks>): Alert[] {
+  const incidentAlerts: Alert[] = incidentList.map(incident => ({
+    id: `incident-${incident.id}`,
+    severity: incident.severity,
+    category: incident.type === 'Road Blockage' ? 'Route Closure' : incident.type === 'Flood' ? 'Flood' : incident.type === 'Landslide' ? 'Landslide' : incident.status === 'ESCALATED' ? 'Escalation' : incident.type,
+    title: incident.status === 'ESCALATED' ? `Escalated: ${incident.type}` : `Pending ${incident.type.toLowerCase()} report`,
+    location: incident.location,
+    time: incident.reportedTime,
+    description: incident.description,
+    source: incident.reportedBy,
+    acknowledged: incident.status === 'RESOLVED',
+  }));
+
+  const taskAlerts: Alert[] = taskList.filter(task => ['New', 'In Progress', 'Escalated'].includes(task.status)).map(task => {
+    const category = /logistics|convoy|supply/i.test(task.title) ? 'Logistics Delay' : task.status === 'Escalated' ? 'Escalation' : 'Task';
+    return {
+      id: `task-${task.id}`,
+      severity: task.priority,
+      category,
+      title: task.status === 'Escalated' ? `Task escalated: ${task.title}` : `Task update: ${task.title}`,
+      location: task.location,
+      time: task.created,
+      description: task.description,
+      source: task.assignedOfficer ?? 'System',
+      acknowledged: task.status === 'Completed' || task.status === 'Escalated',
+    };
+  });
+
+  return [...incidentAlerts, ...taskAlerts].sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime());
+}
 
 export default function Dashboard({ setPage }: { setPage: (p: string) => void }) {
-  const pendingIncidents = incidents.filter(i => i.status === 'PENDING_VERIFICATION');
-  const activeIncidents = incidents.filter(i => i.status === 'ACTIVE' || i.status === 'ESCALATED');
-  const criticalAlerts = alerts.filter(a => !a.acknowledged && a.severity === 'CRITICAL');
+  const [incidents, setIncidents] = useState<ReturnType<typeof getIncidents>>(() => getIncidents());
+  const [tasks, setTasks] = useState<ReturnType<typeof getTasks>>(() => getTasks());
+
+  useEffect(() => subscribeToIncidents(stored => setIncidents(stored)), []);
+  useEffect(() => subscribeToTasks(stored => setTasks(stored)), []);
+
+  const pendingIncidents = useMemo(() => incidents.filter(i => i.status === 'PENDING_VERIFICATION' || i.status === 'UNDER_REVIEW'), [incidents]);
+  const activeIncidents = useMemo(() => incidents.filter(i => i.status === 'ACTIVE' || i.status === 'ESCALATED'), [incidents]);
+  const blockedRoutes = useMemo(() => new Set(incidents.filter(i => i.status === 'ACTIVE' || i.status === 'ESCALATED').map(i => i.route)).size, [incidents]);
+  const highRiskRoutes = useMemo(() => new Set(incidents.filter(i => i.severity === 'HIGH' || i.severity === 'CRITICAL').map(i => i.route)).size, [incidents]);
+  const activeLogistics = useMemo(() => tasks.filter(task => task.status === 'New' || task.status === 'In Progress' || task.status === 'Escalated').length, [tasks]);
+  const avgResponseMinutes = incidents.length ? Math.round(incidents.reduce((sum, incident) => sum + toMinutesSince(incident.reportedTime), 0) / incidents.length) : 0;
+  const alerts = useMemo(() => buildAlerts(incidents, tasks), [incidents, tasks]);
+  const criticalAlerts = alerts.filter(a => !a.acknowledged && (a.severity === 'CRITICAL' || a.severity === 'HIGH'));
   const highAlerts = alerts.filter(a => !a.acknowledged && a.severity === 'HIGH');
+
+  const kpis = [
+    { label: 'Active Incidents', value: String(activeIncidents.length), icon: '◆', change: `${pendingIncidents.length} pending review`, changeUp: false, color: '#BE2424' },
+    { label: 'Blocked Routes', value: String(blockedRoutes), icon: '→', change: blockedRoutes ? 'Live route impact' : 'No blocked routes', changeUp: false, color: '#C25A1A' },
+    { label: 'High-Risk Routes', value: String(highRiskRoutes), icon: '▲', change: highRiskRoutes ? 'Priority monitoring' : 'Stable', changeUp: false, color: '#C4861A' },
+    { label: 'Active Logistics', value: String(activeLogistics), icon: '⊟', change: activeLogistics ? 'Field operations active' : 'No active logistics', changeUp: false, color: '#2F6F7E' },
+    { label: 'Pending Reports', value: String(pendingIncidents.length), icon: '⊡', change: pendingIncidents.length ? 'Awaiting verification' : 'All clear', changeUp: false, color: '#17324D' },
+    { label: 'Avg Response Time', value: `${avgResponseMinutes} min`, icon: '◷', change: avgResponseMinutes <= 45 ? 'Within SLA' : 'Needs attention', changeUp: avgResponseMinutes <= 45, color: '#C4861A' },
+  ];
 
   return (
     <div className="space-y-6 max-w-screen-2xl">
@@ -32,7 +84,7 @@ export default function Dashboard({ setPage }: { setPage: (p: string) => void })
           <span className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded border"
             style={{ background: '#EAF4EE', borderColor: '#A8D4B8', color: '#2D6B4F' }}>
             <span className="w-1.5 h-1.5 rounded-full bg-green-500 inline-block"></span>
-            DEMO DATA — Live Monitoring Active
+            Live Monitoring Active
           </span>
           <button className="text-xs px-3 py-1.5 rounded border font-medium transition-colors"
             style={{ background: '#17324D', color: 'white', borderColor: '#17324D' }}>

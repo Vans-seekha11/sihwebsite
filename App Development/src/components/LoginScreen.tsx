@@ -434,7 +434,7 @@ function CreateAccountView({
   const valid =
     name.trim() !== "" &&
     credential.trim() !== "" &&
-    district !== "" &&
+    (role === "control" || district !== "") &&
     newPw.length >= 8 &&
     confirmPw === newPw &&
     role !== null &&
@@ -446,8 +446,7 @@ function CreateAccountView({
     setSubmitting(true);
     clearError();
     try {
-      await signUp(credential, newPw, name, district);
-      // Account created; awaits admin approval — don't auto-navigate.
+      await signUp(credential, newPw, name, district, role);
       setSubmitted(true);
     } catch {
       // error surfaced via authError
@@ -464,11 +463,10 @@ function CreateAccountView({
           <Check size={28} strokeWidth={2} className="text-clear" />
         </div>
         <h1 className="mt-4 text-center font-public text-[22px] font-bold text-navy">
-          Account request submitted
+          Account created successfully
         </h1>
         <p className="mt-3 text-center font-noto text-[14px] leading-relaxed text-navy/60">
-          Your account is pending administrator approval. You'll receive an
-          email at your registered address once access is granted.
+          You can now log in using your registered credentials.
         </p>
         <button
           onClick={onSignIn}
@@ -506,14 +504,6 @@ function CreateAccountView({
           onChange={setCredential}
           placeholder="officer@gov.in or employee ID"
         />
-        <GlassSelect
-          label="District / region"
-          value={district}
-          onChange={setDistrict}
-          placeholder="Select your district or region"
-          options={DISTRICTS}
-        />
-
         {/* Password */}
         <div className="mb-1.5">
           <FieldLabel>Password</FieldLabel>
@@ -554,7 +544,10 @@ function CreateAccountView({
               return (
                 <button
                   key={r}
-                  onClick={() => setRole(r)}
+                  onClick={() => {
+                    setRole(r);
+                    if (r === "control") setDistrict("");
+                  }}
                   aria-pressed={on}
                   className={`flex min-h-[44px] items-center gap-3 rounded-lg border px-3.5 py-2.5 text-left transition-colors ${
                     on
@@ -587,6 +580,16 @@ function CreateAccountView({
           </div>
         </div>
 
+        {role !== null && role !== "control" && (
+          <GlassSelect
+            label="District / region"
+            value={district}
+            onChange={setDistrict}
+            placeholder="Select District"
+            options={DISTRICTS}
+          />
+        )}
+
         <button
           onClick={handleCreate}
           disabled={!valid}
@@ -605,8 +608,7 @@ function CreateAccountView({
         )}
 
         <p className="mt-3 text-center font-noto text-[12px] leading-snug text-navy/50">
-          New accounts require administrator approval before first login. You
-          will be notified by email once access is granted.
+          Your account is ready to use.
         </p>
       </div>
 

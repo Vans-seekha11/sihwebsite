@@ -21,7 +21,7 @@ import {
   XIcon,
 } from "./icons";
 import { supabase } from "../lib/supabase";
-import type { Profile as DbProfile } from "../lib/database.types";
+import { useAuth } from "../lib/useAuth";
 
 // ── Types ──────────────────────────────────────────────────────────
 export type ProfileRole = "field" | "district" | "control";
@@ -41,47 +41,13 @@ interface ProfileData {
   roleInitials: string;
 }
 
-const ROLE_DATA: Record<ProfileRole, ProfileData> = {
-  field: {
-    name: "A. Sangma",
-    officerId: "NER-FO-4471",
-    role: "Field Officer",
-    department: "NER Logistics Division",
-    region: "Ri Bhoi District, Meghalaya",
-    phone: "+91 94365 00471",
-    email: "a.sangma@ner.gov.in",
-    lastLogin: "Today, 09:38 IST",
-    accountStatus: "active",
-    roleAccent: "#d9a441",
-    roleInitials: "FO",
-  },
-  district: {
-    name: "R. Borah",
-    officerId: "NER-DO-2281",
-    role: "District Officer",
-    department: "Kamrup Metro District Administration",
-    region: "Kamrup Metro, Assam",
-    phone: "+91 98641 02281",
-    email: "r.borah@kamrup.gov.in",
-    lastLogin: "Today, 09:41 IST",
-    accountStatus: "active",
-    roleAccent: "#d9a441",
-    roleInitials: "DO",
-  },
-  control: {
-    name: "S. Khongsdier",
-    officerId: "NER-CO-0012",
-    role: "Control Room Operator",
-    department: "NER Regional Command Center",
-    region: "North Eastern Region (8 States)",
-    phone: "+91 98000 10012",
-    email: "s.khongsdier@ner.gov.in",
-    lastLogin: "Today, 09:41 IST",
-    accountStatus: "active",
-    roleAccent: "#d9a441",
-    roleInitials: "CO",
-  },
+const ROLE_LABELS: Record<ProfileRole, string> = {
+  field: "Field Officer",
+  district: "District Officer",
+  control: "Control Room",
 };
+
+const ROLE_INITIALS: Record<ProfileRole, string> = { field: "FO", district: "DO", control: "CO" };
 
 // ── Helpers ────────────────────────────────────────────────────────
 function Toggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
@@ -223,13 +189,28 @@ export default function ProfileScreen({
   profileRole = "field",
   onClose,
   onSignOut,
+  onUpdated,
 }: {
   profileRole?: ProfileRole;
   onClose: () => void;
   onSignOut?: () => void;
+  onUpdated?: (role: ProfileRole) => void;
 }) {
-  const data = ROLE_DATA[profileRole];
-  const [dbProfile, setDbProfile] = useState<DbProfile | null>(null);
+  const { profile, role: authRole, district, user, updateProfile, refreshProfile } = useAuth();
+  const currentRole = authRole ?? profileRole;
+  const data: ProfileData = {
+    name: profile?.full_name ?? "",
+    officerId: profile?.officer_id ?? "Not assigned",
+    role: ROLE_LABELS[currentRole],
+    department: profile?.department ?? "Not provided",
+    region: district ?? profile?.region ?? "Not provided",
+    phone: profile?.phone ?? "Not provided",
+    email: user?.email ?? "Not provided",
+    lastLogin: "Current session",
+    accountStatus: profile?.is_active === false ? "inactive" : "active",
+    roleAccent: "#d9a441",
+    roleInitials: ROLE_INITIALS[currentRole],
+  };
   const [tab, setTab] = useState<Tab>("profile");
   // Which Settings accordion section is open (only one at a time).
   const [openSection, setOpenSection] = useState<SettingKey | null>(null);
@@ -238,12 +219,37 @@ export default function ProfileScreen({
 
   // Edit profile state
   const [editing, setEditing] = useState(false);
-  const [editName, setEditName] = useState(data.name);
-  const [editPhone, setEditPhone] = useState(data.phone);
-  const [editEmail, setEditEmail] = useState(data.email);
-  const [editDept, setEditDept] = useState(data.department);
+  const [editName, setEditName] = useState("");
+  const [editPhone, setEditPhone] = useState("");
+  const [editEmail, setEditEmail] = useState("");
+  const [editDept, setEditDept] = useState("");
+  const [editRegion, setEditRegion] = useState("");
+  const [editRole, setEditRole] = useState<ProfileRole>(currentRole);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
-  const [avatarUploaded, setAvatarUploaded] = useState(false);
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+  const [profileError, setProfileError] = useState("");
+
+  useEffect(() => {
+    setEditName(data.name);
+    setEditPhone(data.phone === "Not provided" ? "" : data.phone);
+    setEditEmail(data.email === "Not provided" ? "" : data.email);
+    setEditDept(data.department === "Not provided" ? "" : data.department);
+    setEditRegion(data.region === "Not provided" ? "" : data.region);
+    setEditRole(currentRole);
+    setAvatarUrl(profile?.avatar_url ?? null);
+  }, [profile?.updated_at, user?.email, district, currentRole]);
+
+  const handleAvatarChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/") || file.size > 2_000_000) {
+      setProfileError("Choose an image smaller than 2 MB.");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => setAvatarUrl(typeof reader.result === "string" ? reader.result : null);
+    reader.readAsDataURL(file);
+  };
 
   // Security state
   const [currentPwd, setCurrentPwd] = useState("");
@@ -289,13 +295,33 @@ export default function ProfileScreen({
   const toggleNotif = (key: keyof typeof notifs) =>
     setNotifs((prev) => ({ ...prev, [key]: !prev[key] }));
 
-  const handleSaveProfile = () => {
+  const handleSaveProfile = async () => {
+    if (!editName.trim() || !editEmail.trim() || (editRole !== "control" && !editRegion.trim())) {
+      setProfileError("Name, email, and district are required for this role.");
+      return;
+    }
+    setProfileError("");
     setSaveState("saving");
-    setTimeout(() => {
+    try {
+      await updateProfile({
+        fullName: editName,
+        phone: editPhone,
+        email: editEmail,
+        department: editDept,
+        region: editRegion,
+        avatarUrl,
+        role: editRole,
+        district: editRegion,
+      });
       setSaveState("saved");
+      await refreshProfile();
+      onUpdated?.(editRole);
       setEditing(false);
       setTimeout(() => setSaveState("idle"), 2500);
-    }, 900);
+    } catch {
+      setProfileError("Profile could not be updated. Please try again.");
+      setSaveState("idle");
+    }
   };
 
   const handleChangePassword = () => {
@@ -355,24 +381,25 @@ export default function ProfileScreen({
           <div className="relative shrink-0">
             <div
               className="flex h-[60px] w-[60px] items-center justify-center rounded-full border-2 border-white/20"
-              style={{ background: avatarUploaded ? data.roleAccent : "rgba(255,255,255,0.1)" }}
+              style={{ background: avatarUrl ? "rgba(255,255,255,0.1)" : "rgba(255,255,255,0.1)" }}
             >
-              {avatarUploaded ? (
-                <span className="font-public text-[22px] font-extrabold text-navy">
-                  {data.roleInitials}
-                </span>
+              {avatarUrl ? (
+                <img src={avatarUrl} alt="Profile" className="h-full w-full rounded-full object-cover" />
               ) : (
-                <User size={28} strokeWidth={1.5} className="text-white" />
+                <span className="font-public text-[22px] font-extrabold text-white">{data.roleInitials}</span>
               )}
             </div>
             {tab === "profile" && (
-              <button
-                onClick={() => setAvatarUploaded((v) => !v)}
-                className="absolute -bottom-1 -right-1 flex h-6 w-6 items-center justify-center rounded-full bg-white shadow-md active:scale-95 transition-transform"
-                title="Change photo"
-              >
-                <Camera size={12} strokeWidth={2} className="text-navy" />
-              </button>
+              <>
+                <label
+                  htmlFor="profile-photo"
+                  className="absolute -bottom-1 -right-1 flex h-6 w-6 items-center justify-center rounded-full bg-white shadow-md active:scale-95 transition-transform"
+                  title="Change photo"
+                >
+                  <Camera size={12} strokeWidth={2} className="text-navy" />
+                </label>
+                <input id="profile-photo" type="file" accept="image/*" onChange={handleAvatarChange} className="hidden" />
+              </>
             )}
           </div>
           <div className="min-w-0 flex-1">
@@ -492,20 +519,21 @@ export default function ProfileScreen({
                   <div className="mb-4 flex items-center gap-3">
                     <div
                       className="flex h-[52px] w-[52px] shrink-0 items-center justify-center rounded-full border-2 border-navy/15"
-                      style={{ background: avatarUploaded ? data.roleAccent : "rgba(14,42,71,0.06)" }}
+                      style={{ background: avatarUrl ? "rgba(14,42,71,0.06)" : "rgba(14,42,71,0.06)" }}
                     >
-                      {avatarUploaded ? (
-                        <span className="font-public text-[18px] font-extrabold text-navy">{data.roleInitials}</span>
+                      {avatarUrl ? (
+                        <img src={avatarUrl} alt="Profile" className="h-full w-full rounded-full object-cover" />
                       ) : (
-                        <User size={24} strokeWidth={1.5} className="text-navy/50" />
+                        <span className="font-public text-[18px] font-extrabold text-navy">{data.roleInitials}</span>
                       )}
                     </div>
-                    <button
-                      onClick={() => setAvatarUploaded((v) => !v)}
+                    <label
+                      htmlFor="profile-photo-settings"
                       className="flex items-center gap-1.5 font-public text-[13px] font-semibold text-navy active:opacity-70"
                     >
                       <Camera size={13} strokeWidth={2} /> Change photo
-                    </button>
+                    </label>
+                    <input id="profile-photo-settings" type="file" accept="image/*" onChange={handleAvatarChange} className="hidden" />
                   </div>
                   {(
                     [
@@ -525,9 +553,45 @@ export default function ProfileScreen({
                       />
                     </div>
                   ))}
+                  <div className="mb-3">
+                    <label className="mb-1.5 block font-noto text-[12px] text-ink/60">Role / Position</label>
+                    <select
+                      value={editRole}
+                      onChange={(e) => {
+                        const nextRole = e.target.value as ProfileRole;
+                        setEditRole(nextRole);
+                        if (nextRole === "control") setEditRegion("");
+                      }}
+                      className="w-full rounded border border-navy/20 bg-paper px-3 py-2 font-noto text-[14px] text-navy outline-none focus:border-navy"
+                    >
+                      <option value="field">Field Officer</option>
+                      <option value="district">District Officer</option>
+                      <option value="control">Control Room</option>
+                    </select>
+                  </div>
+                  {editRole !== "control" && (
+                    <div className="mb-3">
+                      <label className="mb-1.5 block font-noto text-[12px] text-ink/60">District / Region</label>
+                      <input
+                        type="text"
+                        value={editRegion}
+                        onChange={(e) => setEditRegion(e.target.value)}
+                        className="w-full rounded border border-navy/20 bg-paper px-3 py-2 font-noto text-[14px] text-navy outline-none focus:border-navy"
+                      />
+                    </div>
+                  )}
                   <div className="mt-1 flex gap-3">
                     <button
-                      onClick={() => { setEditName(data.name); setEditPhone(data.phone); setEditEmail(data.email); setEditDept(data.department); setOpenSection(null); }}
+                      onClick={() => {
+                        setEditName(data.name);
+                        setEditPhone(data.phone === "Not provided" ? "" : data.phone);
+                        setEditEmail(data.email === "Not provided" ? "" : data.email);
+                        setEditDept(data.department === "Not provided" ? "" : data.department);
+                        setEditRegion(data.region === "Not provided" ? "" : data.region);
+                        setEditRole(currentRole);
+                        setProfileError("");
+                        setOpenSection(null);
+                      }}
                       className="flex-1 rounded-md border border-navy/30 py-2.5 font-public text-[14px] font-semibold text-navy transition-opacity active:opacity-70"
                     >
                       Cancel
@@ -545,6 +609,7 @@ export default function ProfileScreen({
                   {saveState === "saved" && (
                     <p className="mt-2.5 font-public text-[13px] font-semibold text-clear">✓ Profile updated</p>
                   )}
+                  {profileError && <p className="mt-2.5 font-public text-[13px] font-semibold text-critical">{profileError}</p>}
                 </SettingRow>
 
                 {/* 2 · Notifications */}

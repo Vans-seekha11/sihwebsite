@@ -51,6 +51,7 @@ export interface AuthState {
   user: User | null;
   profile: Profile | null;
   role: Role | null;
+  district: string | null;
   /** Error message from the last auth operation, if any. */
   error: string | null;
 }
@@ -62,8 +63,20 @@ export interface AuthActions {
     password: string,
     fullName: string,
     district: string,
+    role: Role,
   ) => Promise<void>;
   signOut: () => Promise<void>;
+  updateProfile: (input: {
+    fullName: string;
+    phone: string;
+    email: string;
+    department: string;
+    region: string;
+    avatarUrl: string | null;
+    role: Role;
+    district: string;
+  }) => Promise<void>;
+  refreshProfile: () => Promise<void>;
   clearError: () => void;
 }
 
@@ -72,17 +85,30 @@ export function useAuth(): AuthState & AuthActions {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [role, setRole] = useState<Role | null>(null);
+  const [district, setDistrict] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // ── Load profile + role from DB after auth ──────────────────────────────
   async function loadProfileAndRole(uid: string) {
     const [profileRes, roleRes] = await Promise.all([
       supabase.from("profiles").select("*").eq("id", uid).single(),
-      supabase.from("user_roles").select("role").eq("user_id", uid).eq("is_active", true).single(),
+      supabase.from("user_roles").select("role, district_id").eq("user_id", uid).eq("is_active", true).single(),
     ]);
 
     if (profileRes.data) setProfile(profileRes.data);
-    if (roleRes.data) setRole(dbRoleToAppRole(roleRes.data.role));
+    if (roleRes.data) {
+      setRole(dbRoleToAppRole(roleRes.data.role));
+      if (roleRes.data.district_id) {
+        const { data: location } = await supabase
+          .from("locations")
+          .select("name, district, state")
+          .eq("id", roleRes.data.district_id)
+          .single();
+        setDistrict(location?.name ?? location?.district ?? location?.state ?? null);
+      } else {
+        setDistrict(null);
+      }
+    }
   }
 
   // ── Session restore on mount ────────────────────────────────────────────
@@ -107,6 +133,7 @@ export function useAuth(): AuthState & AuthActions {
           setUser(null);
           setProfile(null);
           setRole(null);
+          setDistrict(null);
         }
       },
     );
@@ -137,7 +164,8 @@ export function useAuth(): AuthState & AuthActions {
     officerIdOrEmail: string,
     password: string,
     fullName: string,
-    _district: string,
+    district: string,
+    role: Role,
   ) {
     setError(null);
     setLoading(true);
@@ -146,14 +174,19 @@ export function useAuth(): AuthState & AuthActions {
       const { error: authError } = await supabase.auth.signUp({
         email,
         password,
-        options: { data: { full_name: fullName } },
+        options: {
+          data: {
+            full_name: fullName,
+            district,
+            requested_role: role === "field" ? "field_officer" : role === "district" ? "district_officer" : "control_room",
+          },
+        },
       });
       if (authError) throw authError;
-      // Account created — awaiting admin approval before operational access.
-      // The trigger in migration 0014 creates the profiles row automatically.
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Sign-up failed";
       setError(normaliseAuthError(msg));
+      throw err;
     } finally {
       setLoading(false);
     }
@@ -165,15 +198,83 @@ export function useAuth(): AuthState & AuthActions {
     // onAuthStateChange clears state.
   }
 
+  async function updateProfile(input: {
+    fullName: string;
+    phone: string;
+    email: string;
+    department: string;
+    region: string;
+    avatarUrl: string | null;
+    role: Role;
+    district: string;
+  }) {
+    if (!user) throw new Error("You must be signed in to update your profile.");
+    setError(null);
+    setLoading(true);
+    try {
+      const { error: profileError } = await supabase
+        .from("profiles")
+        .update({
+          full_name: input.fullName.trim(),
+          phone: input.phone.trim() || null,
+          department: input.department.trim() || null,
+          region: input.region.trim() || null,
+          avatar_url: input.avatarUrl,
+        })
+        .eq("id", user.id);
+      if (profileError) throw profileError;
+
+      const { error: emailError } = await supabase.auth.updateUser({ email: input.email.trim() });
+      if (emailError) throw emailError;
+
+      let districtId: string | null = null;
+      if (input.role !== "control" && input.district.trim()) {
+        const { data: location, error: locationError } = await supabase
+          .from("locations")
+          .select("id")
+          .or(`name.eq.${input.district.trim()},district.eq.${input.district.trim()},state.eq.${input.district.trim()}`)
+          .limit(1)
+          .single();
+        if (locationError) throw locationError;
+        districtId = location.id;
+      }
+
+      const { error: roleError } = await supabase
+        .from("user_roles")
+        .update({
+          role: input.role === "field" ? "field_officer" : input.role === "district" ? "district_officer" : "control_room",
+          district_id: districtId,
+          is_active: true,
+        })
+        .eq("user_id", user.id);
+      if (roleError) throw roleError;
+
+      await loadProfileAndRole(user.id);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Profile update failed";
+      setError(normaliseAuthError(msg));
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function refreshProfile() {
+    if (user) await loadProfileAndRole(user.id);
+  }
+
   return {
     loading,
     user,
     profile,
     role,
+    district,
     error,
     signIn,
     signUp,
     signOut,
+    updateProfile,
+    refreshProfile,
     clearError: () => setError(null),
   };
 }
