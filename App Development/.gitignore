@@ -20,3 +20,8 @@ logs/
 # beside it.
 /.plugins/
 /.opencode-skills/
+
+# Local Supabase environment
+.env.local
+.env.*.local
+supabase/.temp/
