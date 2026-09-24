@@ -1,7 +1,6 @@
 node_modules/
 dist/
 build/
-.next/
 .cache/
 .env*
 !.env.example
@@ -11,8 +10,6 @@ vite.config.*.timestamp-*
 *-debug.log*
 logs/
 *.log
-.DS_Store
-._*
 .claude-replay.*
 .tmp-*
 /.figma/design-context/
@@ -23,3 +20,8 @@ logs/
 # beside it.
 /.plugins/
 /.opencode-skills/
+
+# Local Supabase environment
+.env.local
+.env.*.local
+supabase/.temp/
